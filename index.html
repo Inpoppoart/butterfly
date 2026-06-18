@@ -112,6 +112,7 @@
       <div class="tile"><div class="n" id="s-acc">—</div><div class="l">acc</div></div>
     </div>
   </div>
+
   <div class="ctrlrow">
     <div class="seg" id="modeseg">
       <button data-mode="adaptive" aria-pressed="true">Adaptive</button>
@@ -123,15 +124,18 @@
     <button class="btn btn-ghost" id="masteryBtn" style="height:38px;font-size:13px;padding:0 14px;margin-left:auto">Mastery</button>
   </div>
   <div class="levelbar" id="levelbar"></div>
+
   <div class="card hidden" id="masteryCard">
     <p class="eyebrow">Mastery by pattern <span class="rt" id="totalReps"></span></p>
     <div class="mastery" id="masteryBody"></div>
   </div>
+
   <div class="card" id="quoteCard">
     <p class="eyebrow"><span id="quoteLabel">You're quoted</span><span class="rt" id="catTag"></span></p>
     <div class="quotes" id="quotes"></div>
     <div class="tempo" id="tempo"><div class="bar" id="tempoBar"></div></div>
   </div>
+
   <div class="card" id="trialCard">
     <p class="ask" id="ask"></p>
     <div id="trialBody"></div>
@@ -141,6 +145,7 @@
     </div>
     <div class="note" id="note"></div>
   </div>
+
   <div class="card hidden" id="result">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
       <div class="verdict" id="verdict"></div><div class="rt" id="rtline"></div>
@@ -150,6 +155,7 @@
     <p class="explain" id="explain"></p>
     <div class="row-actions"><button class="btn btn-primary" id="next">Next →</button></div>
   </div>
+
   <div class="card hidden" id="intro">
     <p class="eyebrow">New pattern — <span id="introName"></span></p>
     <p style="font-size:14px;margin:0 0 4px" id="introText"></p>
@@ -157,13 +163,16 @@
     <div class="modelchips" id="introChips"></div>
     <div class="row-actions"><button class="btn btn-primary" id="introGo">Got it — try one</button></div>
   </div>
+
   <footer>
     The pad: every price is an X — left of the tenor is the receive leg, right is the pay leg; matched pairs cancel.<br>
     Convention: spread bid = receive near / pay far · fly bid = receive wings / pay belly ×2. Any expression that nets to the same risk is marked correct.
   </footer>
 </div>
+
 <script>
 (function(){
+  /* ================= verified engine ================= */
   function contrib(l){var b=l.kind==='fwd'?[[l.t[0],1],[l.t[1],-1]]:[[l.t[0],1],[l.t[1],-2],[l.t[2],1]];var s=(l.side==='bid'?1:-1)*l.size,m={};b.forEach(function(p){m[p[0]]=(m[p[0]]||0)+p[1]*s;});return m;}
   function netOf(legs){var n={};legs.forEach(function(l){var c=contrib(l);for(var k in c)n[k]=(n[k]||0)+c[k];});for(var k in n)if(n[k]===0)delete n[k];return n;}
   function sameNet(a,b){var ks={};for(var k in a)ks[k]=1;for(var k2 in b)ks[k2]=1;for(var k3 in ks)if((a[k3]||0)!==(b[k3]||0))return false;return true;}
@@ -174,8 +183,7 @@
   function mergeLegs(legs){var m={},o=[];legs.forEach(function(l){var k=legKey(l);if(!m[k]){m[k]={kind:l.kind,t:l.t.slice(),side:l.side,size:0};o.push(k);}m[k].size+=l.size;});return o.map(function(k){return m[k];}).filter(function(l){return l.size!==0;});}
   function describe(net){
     var R=[],P=[];Object.keys(net).map(Number).sort(function(a,b){return a-b;}).forEach(function(t){var w=net[t];for(var i=0;i<Math.abs(w);i++)(w>0?R:P).push(t);});
-    function cnt(a,t){var c=0;for(var i=0;i<a.length;i++)if(a[i]===t)c++;return c;}
-    function rm(a,t){a.splice(a.indexOf(t),1);}
+    function cnt(a,t){var c=0;for(var i=0;i<a.length;i++)if(a[i]===t)c++;return c;} function rm(a,t){a.splice(a.indexOf(t),1);}
     var out=[],g=0;
     while(g++<200){var did=false;
       var pu=P.filter(function(v,i){return P.indexOf(v)===i;});
@@ -235,6 +243,7 @@
     if(cat==='doubleFly'){var seen2={},out2=[],g2=0;while(out2.length<2&&g2++<40){var t=randTriple(pool),k='f'+t.join();if(seen2[k])continue;seen2[k]=1;out2.push({type:'fly',t:t,side:pick(['bid','offer']),size:1});}return out2.length===2?out2:null;}
     return[{type:'fly',t:randTriple(pool),side:pick(['bid','offer']),size:1},{type:'spread',t:randPair(pool),side:pick(['bid','offer']),size:Math.random()<0.5?2:1}];
   }
+  /* distractors for spot */
   function sKey(s){return s.type+'|'+s.t.join(',')+'|'+s.side;}
   function validS(s){var t=s.t;if(t.some(function(x){return x<1;}))return false;for(var i=1;i<t.length;i++)if(t[i]<=t[i-1])return false;return true;}
   function flip(s){return s==='bid'?'offer':'bid';}
@@ -249,22 +258,31 @@
     var tries=0;while(out.length<6&&tries++<60){var ty=pick(['spread','fly']),ar=ty==='spread'?2:3,t=shuf(pool).slice(0,ar).sort(function(x,y){return x-y;});if(t.length<ar)continue;add({type:ty,t:t,side:pick(['bid','offer']);})}
     return shuf(out).slice(0,3);
   }
+
+  /* ================= difficulty schedule ================= */
   function unlocked(d){if(d<=2)return['spread'];if(d<=4)return['spread','fly'];if(d===5)return['spread','fly','multiSpread','doubleFly'];return['spread','fly','multiSpread','doubleFly','compound'];}
   function isAtomic(c){return c==='spread'||c==='fly';}
   function spotChance(d){return d<=2?1:d===3?0.85:d===4?0.55:d===5?0.3:0.2;}
   function tempoMs(d){return d<=2?0:d===3?14000:d===4?11000:d===5?9000:7000;}
   function tgtLegs(d,cat){var b=isAtomic(cat)?2:3;if(d>=6)b+=1;return b;}
   function catName(c){return {spread:'spread',fly:'butterfly','multiSpread':'multi-spread','doubleFly':'double fly','compound':'compound'}[c];}
+
+  /* ================= state ================= */
   var DEF={d:1,cats:{},introduced:{},bestRT:null,rtAll:[],streak:0,bestStreak:0,totAtt:0,totCor:0};
   var ST=load();
   function load(){try{var s=JSON.parse(localStorage.getItem('impl_v2'));if(s&&s.cats)return Object.assign({},DEF,s);}catch(e){}return JSON.parse(JSON.stringify(DEF));}
   function save(){try{localStorage.setItem('impl_v2',JSON.stringify(ST));}catch(e){}}
   function cat(c){if(!ST.cats[c])ST.cats[c]={att:0,cor:0,str:0,rt:[]};return ST.cats[c];}
-  var mode='adaptive',tempoOn=true,cur=null,recent=[],lastMiss=null,win=[],sinceChange=0,timer=null,startT=0,answered=false,builder=[];
+
+  var mode='adaptive', tempoOn=true, cur=null, recent=[], lastMiss=null, win=[], sinceChange=0, timer=null, startT=0, answered=false, builder=[];
+
   var $=function(id){return document.getElementById(id);};
+
+  /* ================= selection ================= */
   function effD(){return mode==='adaptive'?ST.d:(mode==='easy'?1:mode==='medium'?3:6);}
   function chooseCat(d){
     var av=unlocked(d);
+    // force any not-yet-introduced unlocked category first (triggers worked example)
     var fresh=av.filter(function(c){return !ST.introduced[c]&&!isAtomic(c)||(!ST.introduced[c]&&c==='fly');});
     if(fresh.length)return fresh[0];
     var weights=av.map(function(c){var s=cat(c).str;var w=(1-s)+0.15;if(c===lastMiss)w+=0.6;if(recent.length&&recent[recent.length-1]===c)w*=0.3;if(recent.slice(-2).every(function(x){return x===c;}))w*=0.2;return w;});
@@ -272,6 +290,8 @@
     for(var i=0;i<av.length;i++){r-=weights[i];if(r<=0)return av[i];}
     return av[av.length-1];
   }
+
+  /* ================= render: quotes / pad ================= */
   function chipFor(l){var tn={fwd:'spread',fly:'butterfly'}[l.kind];return '<span class="chip '+l.side+'">'+l.t.join('×')+'<span class="px">'+l.side+(l.size>1?' ×'+l.size:'')+'</span><span class="tag">'+tn+'</span></span>';}
   function renderQuotes(quotes){$('quotes').innerHTML=mergeLegs(quotes).map(chipFor).join('');}
   function buildMaps(quotes){var recv={},pay={},lo=99,hi=0;quotes.forEach(function(l){var c=contrib(l);for(var k in c){var w=c[k];if(w>0)recv[k]=(recv[k]||0)+w;else pay[k]=(pay[k]||0)-w;}lo=Math.min(lo,Math.min.apply(null,l.t));hi=Math.max(hi,Math.max.apply(null,l.t));});return{recv:recv,pay:pay,lo:lo,hi:hi};}
@@ -286,16 +306,19 @@
   }
   function structChip(s){var tn=catName(s.type);return '<span class="chip '+s.side+'">'+(s.size>1?s.size+'× ':'')+s.t.join('×')+'<span class="px">'+s.side+'</span><span class="tag">'+tn+'</span></span>';}
   function modelChips(el,model){el.innerHTML='<span class="lab">implies</span>'+model.map(structChip).join('<span class="x">+</span>');}
+
   function explainFor(quotes,model){
     var m=buildMaps(quotes),cancelled=[];for(var t=m.lo;t<=m.hi;t++){if(Math.min(m.recv[t]||0,m.pay[t]||0)>0)cancelled.push(t+'y');}
     var txt=cancelled.length?('The '+cancelled.join(', ')+' leg'+(cancelled.length>1?'s':'')+' cancel. '):'';
     txt+='What survives is '+model.map(function(s){return (s.size>1?s.size+' lots of ':'')+s.t.join('×')+' '+s.side+' ('+catName(s.type)+')';}).join(', plus ')+'.';
     return txt;
   }
+
+  /* ================= trial generation ================= */
   function genProblem(d,cat0,wantSpot){
     for(var a=0;a<60;a++){
       var pool=poolFrom();
-      var res=pickResidual(cat0,wantSpot?Math.min(d,4):d,pool);
+      var res = pickResidual(cat0, wantSpot?Math.min(d,4):d, pool);
       if(!res)continue;
       if(wantSpot){res=[res[0]];res[0].size=1;}
       var prob=constructQuotes(res,tgtLegs(d,cat0),pool);
@@ -303,18 +326,26 @@
     }
     return constructQuotes([{type:'spread',t:[2,5],side:'bid',size:1}],2,[2,3,4,5,6]);
   }
+
   function startTrial(){
     answered=false;$('note').textContent='';$('result').classList.add('hidden');$('intro').classList.add('hidden');$('trialCard').classList.remove('hidden');$('quoteCard').classList.remove('hidden');
-    var d=effD(),c=chooseCat(d);
-    if(!ST.introduced[c]&&c!=='spread'){showIntro(c,d);return;}
-    var spot=isAtomic(c)&&Math.random()<spotChance(d);
-    cur=genProblem(d,c,spot);cur.cat=c;cur.format=spot?'spot':'call';cur.d=d;
-    cur.answer=cur.format==='spot'?cur.model[0]:null;
-    renderQuotes(cur.quotes);$('catTag').textContent=catName(c);$('quoteLabel').textContent='You’re quoted';
+    var d=effD();
+    var c=chooseCat(d);
+    // worked-example gate
+    var needsIntro = !ST.introduced[c] && (c!=='spread');
+    if(needsIntro){ showIntro(c,d); return; }
+    var spot = isAtomic(c) && Math.random()<spotChance(d);
+    cur=genProblem(d,c,spot); cur.cat=c; cur.format=spot?'spot':'call'; cur.d=d;
+    cur.answer = cur.format==='spot' ? cur.model[0] : null;
+    renderQuotes(cur.quotes);
+    $('catTag').textContent=catName(c);
+    $('quoteLabel').textContent='You’re quoted';
     renderLevelbar();
-    if(cur.format==='spot'){renderSpot();}else{renderCall();}
-    var lim=tempoOn?tempoMs(d):0;if(mode==='easy')lim=0;
-    setTempo(lim);startT=performance.now();
+    if(cur.format==='spot'){ renderSpot(); } else { renderCall(); }
+    // tempo
+    var lim=tempoOn?tempoMs(d):0; if(mode==='easy')lim=0;
+    setTempo(lim);
+    startT=performance.now();
   }
   function setTempo(lim){
     clearTimeout(timer);
@@ -322,30 +353,33 @@
     if(!lim){t.style.display='none';return;}
     t.style.display='block';bar.style.transition='none';bar.style.width='100%';
     requestAnimationFrame(function(){bar.style.transition='width '+lim+'ms linear';bar.style.width='0%';});
-    timer=setTimeout(function(){if(!answered)resolveTrial(false,lim,true);},lim);
+    timer=setTimeout(function(){ if(!answered) resolveTrial(false,lim,true); },lim);
   }
+
   function renderSpot(){
     $('ask').textContent='Tap the implied.';
     $('callActions').style.display='none';
     var opts=shuf([cur.answer].concat(distractors(cur.answer,poolFrom())));
     cur.options=opts;
     $('trialBody').innerHTML='<div class="opts">'+opts.map(function(o,i){return '<button class="opt" data-i="'+i+'"><span>'+(o.size>1?o.size+'× ':'')+o.t.join('×')+' '+o.side+'</span><span class="ot">'+catName(o.type)+'</span></button>';}).join('')+'</div>';
-    $('trialBody').querySelectorAll('.opt').forEach(function(b){b.addEventListener('click',function(){if(answered)return;spotAnswer(+b.dataset.i);});});
+    $('trialBody').querySelectorAll('.opt').forEach(function(b){b.addEventListener('click',function(){ if(answered)return; var i=+b.dataset.i; spotAnswer(i); });});
   }
   function spotAnswer(i){
     var rt=performance.now()-startT;
     var correct=sameNet(netOf([structToLeg(cur.options[i])]),cur.net);
-    $('trialBody').querySelectorAll('.opt').forEach(function(b,j){var ok=sameNet(netOf([structToLeg(cur.options[j])]),cur.net);if(ok)b.classList.add('correct');else b.classList.add('dim');if(j===i&&!ok)b.classList.replace('dim','wrong');});
+    var btns=$('trialBody').querySelectorAll('.opt');
+    btns.forEach(function(b,j){var o=cur.options[j];var ok=sameNet(netOf([structToLeg(o)]),cur.net);if(ok)b.classList.add('correct');else b.classList.add('dim');if(j===i&&!ok)b.classList.replace('dim','wrong');});
     resolveTrial(correct,rt,false);
   }
+
   function renderCall(){
     $('ask').textContent='Build the implied — add the structure(s) it nets to.';
     $('callActions').style.display='flex';
-    builder=[{type:'spread',t:['',''],side:'bid',size:1}];
+    builder=[{type:unlocked(cur.d).indexOf('fly')>=0?'spread':'spread',t:['',''],side:'bid',size:1}];
     renderBuilder();
   }
   function renderBuilder(){
-    var allowFly=unlocked(cur.d).indexOf('fly')>=0,allowSize=cur.d>=5;
+    var allowFly=unlocked(cur.d).indexOf('fly')>=0, allowSize=cur.d>=5;
     var h=builder.map(function(b,i){
       var ar=b.type==='fly'?3:2,tin='';
       for(var k=0;k<ar;k++){if(k)tin+='<span class="x">×</span>';tin+='<input class="ten" data-i="'+i+'" data-k="'+k+'" inputmode="numeric" value="'+(b.t[k]||'')+'" placeholder="'+'abc'[k]+'">';}
@@ -368,14 +402,17 @@
     if(answered)return;
     var structs=[];
     for(var i=0;i<builder.length;i++){var b=builder[i],ar=b.type==='fly'?3:2,t=[],seen={};
-      for(var k=0;k<ar;k++){var v=parseInt(b.t[k],10);if(!v){$('note').textContent='Fill in all tenors.';return;}if(seen[v]){$('note').textContent='Tenors in a structure must be distinct.';return;}seen[v]=1;t.push(v);}t.sort(function(x,y){return x-y;});
-      structs.push({type:b.type,t:t,side:b.side,size:cur.d>=5?(parseInt(b.size,10)||1):1});
+      for(var k=0;k<ar;k++){var v=parseInt(b.t[k],10);if(!v){$('note').textContent='Fill in all tenors.';return;}if(seen[v]){$('note').textContent='Tenors in a structure must be distinct.';return;}seen[v]=1;t.push(v);} t.sort(function(x,y){return x-y;});
+      var sz=cur.d>=5?(parseInt(b.size,10)||1):1;
+      structs.push({type:b.type,t:t,side:b.side,size:sz});
     }
     var rt=performance.now()-startT;
     var legs=structs.map(structToLeg);
     var correct=sameNet(netOf(legs),cur.net)&&mergeLegs(legs).length<=cur.model.length;
     resolveTrial(correct,rt,false,structs);
   }
+
+  /* ================= resolve + feedback ================= */
   function resolveTrial(correct,rt,timedOut,playerStructs){
     answered=true;clearTimeout(timer);$('tempo').style.display='none';
     var c=cur.cat,C=cat(c);
@@ -383,39 +420,49 @@
     C.str=C.str*0.7+(correct?0.3:0);
     if(correct&&!timedOut){C.rt.push(rt);if(C.rt.length>30)C.rt.shift();ST.rtAll.push(rt);if(ST.rtAll.length>60)ST.rtAll.shift();if(ST.bestRT==null||rt<ST.bestRT)ST.bestRT=rt;}
     recent.push(c);if(recent.length>6)recent.shift();
+    // adaptive
     if(mode==='adaptive'){win.push(correct?1:0);if(win.length>10)win.shift();sinceChange++;
       if(win.length>=8&&sinceChange>=5){var acc=win.reduce(function(a,b){return a+b;},0)/win.length;if(acc>=0.85&&ST.d<6){ST.d++;sinceChange=0;win=[];}else if(acc<0.6&&ST.d>1){ST.d--;sinceChange=0;win=[];}}}
     save();renderScore();renderLevelbar();
-    $('trialCard').classList.add('hidden');$('result').classList.remove('hidden');
+    // feedback card
+    $('trialCard').classList.add('hidden');
+    $('result').classList.remove('hidden');
     var v=$('verdict');v.className='verdict '+(correct?'right':'wrong2');v.innerHTML='<span class="dot"></span>'+(timedOut?'Time.':(correct?'Right.':'Not quite.'));
-    $('rtline').textContent=timedOut?'':(rt/1000).toFixed(1)+'s';
+    $('rtline').textContent=(timedOut?'':(rt/1000).toFixed(1)+'s');
     renderLadder($('ladder'),cur.quotes,true);
     modelChips($('modelchips'),cur.model);
     var ex=explainFor(cur.quotes,cur.model);
     if(!correct&&playerStructs){var pn=mergeLegs(playerStructs.map(structToLeg));ex+=' Your package nets to '+describe(netOf(pn)).map(function(s){return (s.size>1?s.size+'× ':'')+s.t.join('×')+' '+s.side;}).join(' + ')+'.';}    $('explain').textContent=ex;
     $('next').focus();
   }
+
+  /* ================= worked example ================= */
   function showIntro(c,d){
     $('trialCard').classList.add('hidden');$('result').classList.add('hidden');$('quoteCard').classList.remove('hidden');
     var prob=genProblem(d,c,false);cur=prob;cur.cat=c;
     renderQuotes(prob.quotes);$('catTag').textContent=catName(c);$('quoteLabel').textContent='Worked example';
-    $('intro').classList.remove('hidden');$('introName').textContent=catName(c);
+    $('intro').classList.remove('hidden');
+    $('introName').textContent=catName(c);
     var lead={fly:'Two adjacent spreads sharing a tenor collapse into a butterfly — the shared leg pays twice, so it shows as a doubled stack.',multiSpread:'Several spreads that don’t share a cancelling belly stay as separate spreads — read each pairing off the pad.',doubleFly:'Two butterflies at different points on the curve. Each is its own wings-and-belly; together they’re a double fly.',compound:'A mix — a butterfly plus a spread, sometimes in size. Pull out the fly first, then what’s left is the spread.'}[c]||'';
     $('introText').textContent=lead;
     renderLadder($('introLadder'),prob.quotes,false);
     setTimeout(function(){var s=$('introLadder').querySelectorAll('.mk:not(.gone)');for(var i=0;i<s.length;i++)s[i].classList.add('live');},120);
     modelChips($('introChips'),prob.model);
   }
+
+  /* ================= dashboards ================= */
   function median(a){if(!a.length)return null;var s=a.slice().sort(function(x,y){return x-y;});var m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2;}
   function renderScore(){$('s-streak').textContent=ST.streak;$('s-rt').textContent=ST.rtAll.length?(median(ST.rtAll)/1000).toFixed(1)+'s':'—';$('s-acc').textContent=ST.totAtt?Math.round(100*ST.totCor/ST.totAtt)+'%':'—';}
-  function renderLevelbar(){var d=effD();$('levelbar').innerHTML=(mode==='adaptive'?'Adaptive level <b>'+d+'/6</b>':'')+(mode==='adaptive'?'<span class="track"><span class="fill" style="width:'+(d/6*100)+'%"></span></span>':'<span style="color:var(--ink2)">'+mode+' — fixed level '+d+'</span>')+'<span style="color:var(--ink2)">'+unlocked(d).map(catName).join(' · ')+'</span>';}
+  function renderLevelbar(){var d=effD();$('levelbar').innerHTML=(mode==='adaptive'?'Adaptive level <b>'+d+'/6</b>':catName? '':'')+(mode==='adaptive'?'<span class="track"><span class="fill" style="width:'+(d/6*100)+'%"></span></span>':'<span style="color:var(--ink2)">'+mode+' — fixed level '+d+'</span>')+'<span style="color:var(--ink2)">'+unlocked(d).map(catName).join(' · ')+'</span>';}
   function renderMastery(){
     var cats=['spread','fly','multiSpread','doubleFly','compound'];
     $('totalReps').textContent=ST.totAtt+' reps · best '+(ST.bestRT?(ST.bestRT/1000).toFixed(1)+'s':'—');
-    $('masteryBody').innerHTML=cats.map(function(c){var C=ST.cats[c];var att=C?C.att:0,acc=att?Math.round(100*C.cor/att):0,rt=C&&C.rt.length?(median(C.rt)/1000).toFixed(1)+'s':'—';var locked=att===0;
+    $('masteryBody').innerHTML=cats.map(function(c){var C=ST.cats[c],unl=unlocked(6).indexOf(c)>=0;var att=C?C.att:0,acc=att?Math.round(100*C.cor/att):0,rt=C&&C.rt.length?(median(C.rt)/1000).toFixed(1)+'s':'—';var locked=att===0;
       return '<div class="mline'+(locked?' locked':'')+'"><span class="name">'+catName(c)+'</span><span class="track"><span class="fill" style="width:'+acc+'%;background:'+(acc>=80?'var(--recv)':acc>=50?'#C79A2B':'var(--pay)')+'">'+'</span></span><span class="rtv">'+(att?acc+'% · '+rt:'—')+'</span></div>';
     }).join('');
   }
+
+  /* ================= wiring ================= */
   $('modeseg').querySelectorAll('button').forEach(function(b){b.addEventListener('click',function(){mode=b.dataset.mode;$('modeseg').querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed',x===b);});win=[];sinceChange=0;tempoOn=(mode!=='easy');syncTempoSwitch();startTrial();});});
   function syncTempoSwitch(){$('tempoSwitch').classList.toggle('on',tempoOn);}
   $('tempoToggle').addEventListener('click',function(){tempoOn=!tempoOn;syncTempoSwitch();});
@@ -423,7 +470,8 @@
   $('check').addEventListener('click',doCheck);
   $('addStruct').addEventListener('click',function(){if(builder.length<4){builder.push({type:'spread',t:['',''],side:'bid',size:1});renderBuilder();}});
   $('next').addEventListener('click',startTrial);
-  $('introGo').addEventListener('click',function(){ST.introduced[cur.cat]=true;save();startTrial();});
+  $('introGo').addEventListener('click',function(){var c=cur.cat;ST.introduced[c]=true;save();startTrial();});
+
   syncTempoSwitch();renderScore();startTrial();
 })();
 </script>

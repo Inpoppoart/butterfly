@@ -2,15 +2,19 @@
 'use strict';
 function $(id){return document.getElementById(id);}
 
-// ===================== REAL MARKET DATA (pasted board) =====================
+// ===================== MARKET DATA =====================
+// Curve reconstructed from the user's spread/fly grid. Every spread and fly in
+// that table is reproduced EXACTLY off this curve (it chains: 1x2+2x3=1x3, and
+// every fly = spread - spread). Absolute level is arbitrary (+100 base) since
+// only differences trade. Tenors are restricted to the ones in the grid.
 var TEN=[
- {k:'1m',px:97.8125},{k:'6m',px:102.3125},{k:'9m',px:109.0625},{k:'1y',px:115.375},
- {k:'18m',px:128.375},{k:'2y',px:140.375},{k:'3y',px:159.875},{k:'4y',px:176},
- {k:'5y',px:190.375},{k:'6y',px:203.25},{k:'7y',px:215.25},{k:'8y',px:226.5},
- {k:'9y',px:237.25},{k:'10y',px:247.375},{k:'11y',px:256.625},{k:'12y',px:265.125},
- {k:'13y',px:272.895},{k:'14y',px:280.0638},{k:'15y',px:286.75},{k:'20y',px:312.625},
- {k:'25y',px:326},{k:'30y',px:331.625}
+ {k:'3m',px:100},{k:'6m',px:104.625},{k:'9m',px:111.375},{k:'1y',px:117.75},
+ {k:'18m',px:130.125},{k:'2y',px:141.625},{k:'3y',px:160.625},{k:'4y',px:176.5},
+ {k:'5y',px:190.625},{k:'6y',px:203.375},{k:'7y',px:215.375},{k:'8y',px:226.75},
+ {k:'9y',px:237.5},{k:'10y',px:247.5},{k:'11y',px:256.75},{k:'12y',px:265.5},
+ {k:'15y',px:287.25},{k:'20y',px:313.125}
 ];
+var TWOWAY=0.125; // half the bid/offer spread: bid=mid-0.125, offer=mid+0.125
 function fmt(x){if(x===''||x==null)return'';var n=+x;if(isNaN(n))return String(x);return (Math.round(n*10000)/10000).toString();}
 function signed(x){return (+x>0?'+':'')+fmt(x);}
 
@@ -143,13 +147,16 @@ function lbl(prob,t){return prob.map[t]?prob.map[t].k.toUpperCase():String(t);}
 function joinT(prob,arr){return arr.map(function(t){return lbl(prob,t);}).join('×');}
 function rateOfNet(net,map){var s=0;for(var k in net)s+=net[k]*map[k].px;return -s;}
 function rateOfLeg(l,map){return rateOfNet(contrib(l),map);}
+// the structure's own mid (direction-independent), then its two-way market
+function structMid(prob,l){return rateOfLeg({kind:l.kind,t:l.t.slice(),side:'bid',size:l.size||1},prob.map);}
+function twoWay(m){return fmt(m-TWOWAY)+' / '+fmt(m+TWOWAY);}
 
 // ===================== RENDER QUOTES =====================
 function chipFor(prob,l){
   var tn=l.kind==='fwd'?'spread':'butterfly';
-  var pr=rateOfLeg(l,prob.map);
+  var m=structMid(prob,l);
   return '<span class="qchip '+l.side+'">'+
-    '<span class="qchip-top">'+joinT(prob,l.t)+'<span class="qchip-px">'+signed(pr)+'</span></span>'+
+    '<span class="qchip-top">'+joinT(prob,l.t)+'<span class="qchip-px">'+twoWay(m)+'</span></span>'+
     '<span class="qchip-tag">'+l.side+(l.size>1?' ×'+l.size:'')+' · '+tn+'</span></span>';
 }
 function renderQuotes(prob){$('quotes').innerHTML=mergeLegs(prob.quotes).map(function(l){return chipFor(prob,l);}).join('');}
@@ -170,9 +177,9 @@ function renderLadder(el,prob,animate){
   if(animate){requestAnimationFrame(function(){requestAnimationFrame(fade);});setTimeout(glow,580);}else{fade();}
 }
 function structChip(prob,s){
-  var pr=rateOfLeg(structToLeg(s),prob.map);
+  var m=structMid(prob,structToLeg(s));
   return '<span class="mchip '+s.side+'">'+(s.size>1?s.size+'× ':'')+joinT(prob,s.t)+
-    '<span class="mchip-px">'+signed(pr)+'</span>'+
+    '<span class="mchip-px">'+twoWay(m)+'</span>'+
     '<span class="mchip-tag">'+s.side+' · '+catName(s.type)+'</span></span>';
 }
 function modelChips(el,prob){el.innerHTML='<span class="m-label">implies</span>'+prob.model.map(function(s){return structChip(prob,s);}).join('<span class="m-plus">+</span>');}
@@ -309,7 +316,7 @@ function goRate(){
   cur.rateAns=rateOfNet(cur.net,cur.map);
   cur.rateStart=performance.now();
   var name=cur.model.map(function(s){return joinT(cur,s.t)+' '+s.side;}).join(' + ');
-  $('rateLine').innerHTML='What rate does the implied <b>'+name+'</b> trade?<br>Add the quoted legs (mind bid/offer signs).';
+  $('rateLine').innerHTML='Quote the MID of the implied <b>'+name+'</b>.<br>Add the quoted legs together — each market is mid ∓0.125.';
   showSection('rate');
   var lim=tempoOn?tempoMs(effD()):0;if(mode==='easy')lim=0;setTempo(lim);
 }
@@ -367,12 +374,12 @@ function finalize(idCorrect,rateCorrect,rt,timedOut,rateVal){
   $('rtText').textContent=timedOut?'':(rt/1000).toFixed(2)+'s';
   renderLadder($('ladder'),cur,true);
   modelChips($('modelChips'),cur);
-  var rr='<span class="lbl">IMPLIED RATE</span><span class="ok">'+signed(cur.rateAns)+'</span>';
+  var rr='<span class="lbl">IMPLIED · MID '+fmt(cur.rateAns)+'</span><span class="ok">'+twoWay(cur.rateAns)+'</span>';
   if(!correct&&!timedOut&&rateVal!=null&&!rateCorrect)rr+=' <span class="you">(you: '+fmt(rateVal)+')</span>';
   $('rateResult').innerHTML=rr;
   var legs=mergeLegs(cur.quotes);
   var parts=legs.map(function(l){return joinT(cur,l.t)+' <span class="hl">'+signed(rateOfLeg(l,cur.map))+'</span>';});
-  $('work').innerHTML='Add the quoted legs:<br>'+parts.join('  +  ')+'<br>= <span class="gr">'+signed(cur.rateAns)+'</span>';
+  $('work').innerHTML='Add the quoted legs (mids):<br>'+parts.join('  +  ')+'<br>= <span class="gr">'+signed(cur.rateAns)+'</span> mid &nbsp;→&nbsp; <span class="gr">'+twoWay(cur.rateAns)+'</span>';
   var m=buildMaps(cur.quotes),cancelled=[];
   for(var t=m.lo;t<=m.hi;t++){if(Math.min(m.recv[t]||0,m.pay[t]||0)>0)cancelled.push(lbl(cur,t));}
   var ex=cancelled.length?('The '+cancelled.join(', ')+' leg'+(cancelled.length>1?'s':'')+' cancel. '):'';
@@ -390,7 +397,7 @@ function showIntro(c,d){
   showSection('intro');
   $('introEyebrow').textContent='NEW PATTERN — '+catName(c).toUpperCase();
   var lead={fly:'Two adjacent spreads sharing a tenor collapse into a butterfly — the shared leg pays twice.',multiSpread:'Several spreads that don\'t share a cancelling belly stay separate — read each pairing.',doubleFly:'Two butterflies at different points on the curve. Each is its own wings-and-belly.',compound:'A mix — a butterfly plus a spread. Pull out the fly first, then read the spread.'}[c]||'';
-  $('introText').textContent=lead+' Then you\'ll price it from the board.';
+  $('introText').textContent=lead+' Then you\'ll price it from the curve.';
   renderLadder($('introLadder'),prob,false);
   setTimeout(function(){var s=$('introLadder').querySelectorAll('.mk:not(.gone)');for(var i=0;i<s.length;i++)s[i].classList.add('live');},120);
   modelChips($('introChips'),prob);

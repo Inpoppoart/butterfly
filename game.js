@@ -3,10 +3,6 @@
 function $(id){return document.getElementById(id);}
 
 // ===================== MARKET DATA =====================
-// Reference rates come from the user's pasted spread/fly grid. Reconstructed as
-// a single curve that reproduces every spread and fly in that grid exactly
-// (it chains: 1x2+2x3=1x3, and every fly = spread - spread). Absolute level is
-// arbitrary (+100 base); only differences trade. Tenors limited to the grid.
 var TEN=[
  {k:'3m',px:100},{k:'6m',px:104.625},{k:'9m',px:111.375},{k:'1y',px:117.75},
  {k:'18m',px:130.125},{k:'2y',px:141.625},{k:'3y',px:160.625},{k:'4y',px:176.5},
@@ -148,11 +144,13 @@ function rateOfNet(net,map){var s=0;for(var k in net)s+=net[k]*map[k].px;return 
 function rateOfLeg(l,map){return rateOfNet(contrib(l),map);}
 
 // ===================== RENDER QUOTES =====================
+// Chips always show the absolute mid rate (market convention: spreads are positive).
+// Bid vs offer is indicated by colour and the tag label.
 function chipFor(prob,l){
   var tn=l.kind==='fwd'?'spread':'butterfly';
-  var pr=rateOfLeg(l,prob.map);
+  var pr=Math.abs(rateOfLeg(l,prob.map));
   return '<span class="qchip '+l.side+'">'+
-    '<span class="qchip-top">'+joinT(prob,l.t)+'<span class="qchip-px">'+signed(pr)+'</span></span>'+
+    '<span class="qchip-top">'+joinT(prob,l.t)+'<span class="qchip-px">+'+fmt(pr)+'</span></span>'+
     '<span class="qchip-tag">'+l.side+(l.size>1?' ×'+l.size:'')+' · '+tn+'</span></span>';
 }
 function renderQuotes(prob){$('quotes').innerHTML=mergeLegs(prob.quotes).map(function(l){return chipFor(prob,l);}).join('');}
@@ -173,9 +171,9 @@ function renderLadder(el,prob,animate){
   if(animate){requestAnimationFrame(function(){requestAnimationFrame(fade);});setTimeout(glow,580);}else{fade();}
 }
 function structChip(prob,s){
-  var pr=rateOfLeg(structToLeg(s),prob.map);
+  var pr=Math.abs(rateOfLeg(structToLeg(s),prob.map));
   return '<span class="mchip '+s.side+'">'+(s.size>1?s.size+'× ':'')+joinT(prob,s.t)+
-    '<span class="mchip-px">'+signed(pr)+'</span>'+
+    '<span class="mchip-px">+'+fmt(pr)+'</span>'+
     '<span class="mchip-tag">'+s.side+' · '+catName(s.type)+'</span></span>';
 }
 function modelChips(el,prob){el.innerHTML='<span class="m-label">implies</span>'+prob.model.map(function(s){return structChip(prob,s);}).join('<span class="m-plus">+</span>');}
@@ -277,8 +275,8 @@ function renderBuilder(){
   var h=builder.map(function(b,i){
     var ar=b.type==='fly'?3:2,tin='';
     for(var k=0;k<ar;k++){if(k)tin+='<span class="b-x">×</span>';tin+='<select class="b-sel b-ten" data-i="'+i+'" data-k="'+k+'">'+tenorOptions(b.t[k])+'</select>';}
-    return '<div class="brow"><select class="b-sel" data-i="'+i+'" data-f="type"><option value="spread"'+(b.type==='spread'?' selected':'')+'>spread</option>'+(allowFly?'<option value="fly"'+(b.type==='fly'?' selected':'')+'>fly</option>':'')+'</select>'+tin+
-      '<div class="b-sides"><button class="b-sd bid'+(b.side==='bid'?' on':'')+'" data-i="'+i+'" data-side="bid">BID</button><button class="b-sd offer'+(b.side==='offer'?' on':'')+'" data-i="'+i+'" data-side="offer">OFR</button></div>'+
+    return '<div class="brow"><select class="b-sel" data-i="'+i+'" data-f="type"><option value="spread"'+(b.type==='spread'?' selected':'')+'>spread</option>'+(allowFly?'<option value="fly"'+(b.type==='fly'?' selected':'')+'>fly</option>':'')+  '</select>'+tin+
+      '<div class="b-sides"><button class="b-sd bid'+(b.side==='bid'?' on':'')+('" data-i="'+i+'" data-side="bid">BID</button><button class="b-sd offer'+(b.side==='offer'?' on':'')+('" data-i="'+i+'" data-side="offer">OFR</button></div>')+
       (allowSize?'<input class="b-sel" style="width:42px;text-align:center" data-i="'+i+'" data-f="size" inputmode="numeric" value="'+(b.size||1)+'" title="lots">':'')+
       (builder.length>1?'<button class="b-del" data-del="'+i+'">×</button>':'')+'</div>';
   }).join('');
@@ -312,13 +310,13 @@ function goRate(){
   cur.rateAns=rateOfNet(cur.net,cur.map);
   cur.rateStart=performance.now();
   var name=cur.model.map(function(s){return joinT(cur,s.t)+' '+s.side;}).join(' + ');
-  $('rateLine').innerHTML='What rate does the implied <b>'+name+'</b> trade?<br>Add the quoted legs together.';
+  $('rateLine').innerHTML='What rate does the implied <b>'+name+'</b> trade?<br>Bid legs add (+) · offer legs subtract (−).';
   showSection('rate');
   var lim=tempoOn?tempoMs(effD()):0;if(mode==='easy')lim=0;setTempo(lim);
 }
 function updateRateDisp(){var d=$('answerDisp');if(rateInput===''||rateInput==='-'){d.textContent=rateInput===''?'0':'−';d.classList.toggle('empty',rateInput==='');}else{d.textContent=rateInput.replace('-','−');d.classList.remove('empty');}}
 function buildKeypad(){
-  var keys=[['7'],['8'],['9'],['4'],['5'],['6'],['1'],['2'],['3'],['±','fn'],['0'],['.','fn'],['⌫','del'],['ENTER','enter']];
+  var keys=[['7'],['8'],['9'],['4'],['5'],['6'],['1'],['2'],['3'],['±','fn'],['0'],['.',  'fn'],['⌫','del'],['ENTER','enter']];
   $('keypad').innerHTML=keys.map(function(k){var cls=k[1]==='enter'?'key enter':k[1]==='del'?'key del':k[1]==='fn'?'key fn':'key';return '<button class="'+cls+'" data-k="'+k[0]+'">'+k[0]+'</button>';}).join('');
   $('keypad').querySelectorAll('.key').forEach(function(b){b.addEventListener('click',function(){press(b.dataset.k);});});
 }
@@ -374,13 +372,13 @@ function finalize(idCorrect,rateCorrect,rt,timedOut,rateVal){
   if(!correct&&!timedOut&&rateVal!=null&&!rateCorrect)rr+=' <span class="you">(you: '+fmt(rateVal)+')</span>';
   $('rateResult').innerHTML=rr;
   var legs=mergeLegs(cur.quotes);
-  var parts=legs.map(function(l){return joinT(cur,l.t)+' <span class="hl">'+signed(rateOfLeg(l,cur.map))+'</span>';});
-  $('work').innerHTML='Add the quoted legs:<br>'+parts.join('  +  ')+'<br>= <span class="gr">'+signed(cur.rateAns)+'</span>';
+  var parts=legs.map(function(l){var pr=Math.abs(rateOfLeg(l,cur.map));var sgn=l.side==='bid'?'<span class="gr">+</span>':'<span style="color:var(--red);font-weight:700">−</span>';return sgn+' '+joinT(cur,l.t)+' <span class="hl">'+fmt(pr)+'</span>';});
+  $('work').innerHTML='Bid legs add, offer legs subtract:<br>'+parts.join('  ')+'<br>= <span class="gr">'+signed(cur.rateAns)+'</span>';
   var m=buildMaps(cur.quotes),cancelled=[];
   for(var t=m.lo;t<=m.hi;t++){if(Math.min(m.recv[t]||0,m.pay[t]||0)>0)cancelled.push(lbl(cur,t));}
   var ex=cancelled.length?('The '+cancelled.join(', ')+' leg'+(cancelled.length>1?'s':'')+' cancel. '):'';
   ex+='What survives: '+cur.model.map(function(s){return joinT(cur,s.t)+' '+s.side+' ('+catName(s.type)+')';}).join(', plus ')+'.';
-  if(!idCorrect&&cur.playerStructs){var pn=mergeLegs(cur.playerStructs.map(structToLeg));if(pn.length)ex+=' Your shape: '+describe(netOf(pn)).map(function(s){return joinT(cur,s.t)+' '+s.side;}).join(' + ')+'.';}
+  if(!idCorrect&&cur.playerStructs){var pn=mergeLegs(cur.playerStructs.map(structToLeg));if(pn.length)ex+=' Your shape: '+describe(netOf(pn)).map(function(s){return joinT(cur,s.t)+' '+s.side;}).join(' + ')+'.'}
   $('explain').textContent=ex;
   $('nextBtn').focus();
 }
@@ -393,7 +391,7 @@ function showIntro(c,d){
   showSection('intro');
   $('introEyebrow').textContent='NEW PATTERN — '+catName(c).toUpperCase();
   var lead={fly:'Two adjacent spreads sharing a tenor collapse into a butterfly — the shared leg pays twice.',multiSpread:'Several spreads that don\'t share a cancelling belly stay separate — read each pairing.',doubleFly:'Two butterflies at different points on the curve. Each is its own wings-and-belly.',compound:'A mix — a butterfly plus a spread. Pull out the fly first, then read the spread.'}[c]||'';
-  $('introText').textContent=lead+' Then you\'ll price it from the curve.';
+  $('introText').textContent=lead+' Then you\'ll price it from the board.';
   renderLadder($('introLadder'),prob,false);
   setTimeout(function(){var s=$('introLadder').querySelectorAll('.mk:not(.gone)');for(var i=0;i<s.length;i++)s[i].classList.add('live');},120);
   modelChips($('introChips'),prob);

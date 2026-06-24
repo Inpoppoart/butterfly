@@ -3,6 +3,10 @@
 function $(id){return document.getElementById(id);}
 
 // ===================== MARKET DATA =====================
+// Curve reconstructed from the user's spread/fly grid. Every spread and fly in
+// that table is reproduced EXACTLY off this curve (it chains: 1x2+2x3=1x3, and
+// every fly = spread - spread). Absolute level is arbitrary (+100 base) since
+// only differences trade. Tenors are restricted to the ones in the grid.
 var TEN=[
  {k:'3m',px:100},{k:'6m',px:104.625},{k:'9m',px:111.375},{k:'1y',px:117.75},
  {k:'18m',px:130.125},{k:'2y',px:141.625},{k:'3y',px:160.625},{k:'4y',px:176.5},
@@ -44,6 +48,31 @@ function dirSpread(x,y,sz){return x<y?{kind:'fwd',t:[x,y],side:'bid',size:sz}:{k
 function decompose(S,pool){var k=S.size||1;
   if(S.type==='spread'){var d0,d1;if(S.side==='bid'){d0=S.t[0];d1=S.t[1];}else{d0=S.t[1];d1=S.t[0];}
     if(Math.random()<0.5)return[structToLeg(S)];
+    // ~45% of non-self decompositions use spread+fly instead of spread+spread
+    if(Math.random()<0.45){
+      var useLeft=Math.random()<0.5;
+      if(S.side==='bid'){
+        if(useLeft){
+          // [a×d0 bid] + [a×d0×d1 fly offer] → d0×d1 bid
+          var clA=pool.filter(function(p){return p<d0;});
+          if(clA.length){var aN=pick(clA);return[dirSpread(aN,d0,k),{kind:'fly',t:[aN,d0,d1],side:'offer',size:k}];}
+        }else{
+          // [d1×e bid] + [d0×d1×e fly bid] → d0×d1 bid
+          var crA=pool.filter(function(p){return p>d1;});
+          if(crA.length){var eN=pick(crA);return[dirSpread(d1,eN,k),{kind:'fly',t:[d0,d1,eN],side:'bid',size:k}];}
+        }
+      }else{
+        if(useLeft){
+          // [d1×aa offer] + [aa×d1×d0 fly bid] → d1×d0 offer
+          var clB=pool.filter(function(p){return p<d1;});
+          if(clB.length){var aaN=pick(clB);return[dirSpread(d1,aaN,k),{kind:'fly',t:[aaN,d1,d0],side:'bid',size:k}];}
+        }else{
+          // [ee×d0 offer] + [d1×d0×ee fly offer] → d1×d0 offer
+          var crB=pool.filter(function(p){return p>d0;});
+          if(crB.length){var eeN=pick(crB);return[dirSpread(eeN,d0,k),{kind:'fly',t:[d1,d0,eeN],side:'offer',size:k}];}
+        }
+      }
+    }
     var cand=pool.filter(function(p){return p!==d0&&p!==d1;});if(!cand.length)return[structToLeg(S)];
     var p=pick(cand);return[dirSpread(d0,p,k),dirSpread(p,d1,k)];}
   if(Math.random()<0.45)return[structToLeg(S)];
@@ -144,14 +173,10 @@ function rateOfNet(net,map){var s=0;for(var k in net)s+=net[k]*map[k].px;return 
 function rateOfLeg(l,map){return rateOfNet(contrib(l),map);}
 
 // ===================== RENDER QUOTES =====================
-// Chips always show the absolute mid rate (market convention: spreads are positive).
-// Bid vs offer is indicated by colour and the tag label.
 function chipFor(prob,l){
   var tn=l.kind==='fwd'?'spread':'butterfly';
   var pr=Math.abs(rateOfLeg(l,prob.map));
-  return '<span class="qchip '+l.side+'">'+
-    '<span class="qchip-top">'+joinT(prob,l.t)+'<span class="qchip-px">+'+fmt(pr)+'</span></span>'+
-    '<span class="qchip-tag">'+l.side+(l.size>1?' ×'+l.size:'')+' · '+tn+'</span></span>';
+  return '<span class="qchip '+l.side+'">'+'<span class="qchip-top">'+joinT(prob,l.t)+'<span class="qchip-px">+'+fmt(pr)+'</span></span>'+'<span class="qchip-tag">'+l.side+(l.size>1?' ×'+l.size:'')+' · '+tn+'</span></span>';
 }
 function renderQuotes(prob){$('quotes').innerHTML=mergeLegs(prob.quotes).map(function(l){return chipFor(prob,l);}).join('');}
 
@@ -172,9 +197,7 @@ function renderLadder(el,prob,animate){
 }
 function structChip(prob,s){
   var pr=Math.abs(rateOfLeg(structToLeg(s),prob.map));
-  return '<span class="mchip '+s.side+'">'+(s.size>1?s.size+'× ':'')+joinT(prob,s.t)+
-    '<span class="mchip-px">+'+fmt(pr)+'</span>'+
-    '<span class="mchip-tag">'+s.side+' · '+catName(s.type)+'</span></span>';
+  return '<span class="mchip '+s.side+'">'+(s.size>1?s.size+'× ':'')+joinT(prob,s.t)+'<span class="mchip-px">+'+fmt(pr)+'</span>'+'<span class="mchip-tag">'+s.side+' · '+catName(s.type)+'</span></span>';
 }
 function modelChips(el,prob){el.innerHTML='<span class="m-label">implies</span>'+prob.model.map(function(s){return structChip(prob,s);}).join('<span class="m-plus">+</span>');}
 
@@ -275,10 +298,7 @@ function renderBuilder(){
   var h=builder.map(function(b,i){
     var ar=b.type==='fly'?3:2,tin='';
     for(var k=0;k<ar;k++){if(k)tin+='<span class="b-x">×</span>';tin+='<select class="b-sel b-ten" data-i="'+i+'" data-k="'+k+'">'+tenorOptions(b.t[k])+'</select>';}
-    return '<div class="brow"><select class="b-sel" data-i="'+i+'" data-f="type"><option value="spread"'+(b.type==='spread'?' selected':'')+'>spread</option>'+(allowFly?'<option value="fly"'+(b.type==='fly'?' selected':'')+'>fly</option>':'')+  '</select>'+tin+
-      '<div class="b-sides"><button class="b-sd bid'+(b.side==='bid'?' on':'')+('" data-i="'+i+'" data-side="bid">BID</button><button class="b-sd offer'+(b.side==='offer'?' on':'')+('" data-i="'+i+'" data-side="offer">OFR</button></div>')+
-      (allowSize?'<input class="b-sel" style="width:42px;text-align:center" data-i="'+i+'" data-f="size" inputmode="numeric" value="'+(b.size||1)+'" title="lots">':'')+
-      (builder.length>1?'<button class="b-del" data-del="'+i+'">×</button>':'')+'</div>';
+    return '<div class="brow"><select class="b-sel" data-i="'+i+'" data-f="type"><option value="spread"'+(b.type==='spread'?' selected':'')+'>spread</option>'+(allowFly?'<option value="fly"'+(b.type==='fly'?' selected':'')+'>fly</option>':'')+' </select>'+tin+'<div class="b-sides"><button class="b-sd bid'+(b.side==='bid'?' on':'')+' " data-i="'+i+'" data-side="bid">BID</button><button class="b-sd offer'+(b.side==='offer'?' on':'')+' " data-i="'+i+'" data-side="offer">OFR</button></div>'+(allowSize?'<input class="b-sel" style="width:42px;text-align:center" data-i="'+i+'" data-f="size" inputmode="numeric" value="'+(b.size||1)+'" title="lots">':'')+(builder.length>1?'<button class="b-del" data-del="'+i+'">×</button>':'')+'</div>';
   }).join('');
   $('trialArea').innerHTML=h;
   $('trialArea').querySelectorAll('select[data-f="type"]').forEach(function(s){s.addEventListener('change',function(){var i=+s.dataset.i;builder[i].type=s.value;if(s.value==='fly'&&builder[i].t.length<3)builder[i].t[2]='';renderBuilder();});});
@@ -378,7 +398,7 @@ function finalize(idCorrect,rateCorrect,rt,timedOut,rateVal){
   for(var t=m.lo;t<=m.hi;t++){if(Math.min(m.recv[t]||0,m.pay[t]||0)>0)cancelled.push(lbl(cur,t));}
   var ex=cancelled.length?('The '+cancelled.join(', ')+' leg'+(cancelled.length>1?'s':'')+' cancel. '):'';
   ex+='What survives: '+cur.model.map(function(s){return joinT(cur,s.t)+' '+s.side+' ('+catName(s.type)+')';}).join(', plus ')+'.';
-  if(!idCorrect&&cur.playerStructs){var pn=mergeLegs(cur.playerStructs.map(structToLeg));if(pn.length)ex+=' Your shape: '+describe(netOf(pn)).map(function(s){return joinT(cur,s.t)+' '+s.side;}).join(' + ')+'.'}
+  if(!idCorrect&&cur.playerStructs){var pn=mergeLegs(cur.playerStructs.map(structToLeg));if(pn.length)ex+=' Your shape: '+describe(netOf(pn)).map(function(s){return joinT(cur,s.t)+' '+s.side;}).join(' + ')+'.';}  
   $('explain').textContent=ex;
   $('nextBtn').focus();
 }

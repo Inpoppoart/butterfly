@@ -203,6 +203,7 @@ body{background:radial-gradient(1400px 700px at 50% -10%,#0e1d38 0%,transparent 
   <div class="modes">
     <button class="mode-btn active" data-mode="adaptive">AUTO</button>
     <button class="mode-btn" data-mode="easy">EASY</button>
+    <button class="mode-btn" data-mode="spot">SPOT</button>
     <button class="mode-btn" data-mode="medium">MED</button>
     <button class="mode-btn" data-mode="hard">HARD</button>
     <button class="mode-btn" id="boardBtn">📋</button>
@@ -490,7 +491,7 @@ function genProblem(d,cat0,wantSpot){
 }
 
 // ===================== SELECTION =====================
-function effD(){return mode==='adaptive'?ST.d:(mode==='easy'?1:mode==='medium'?3:6);}
+function effD(){return mode==='adaptive'?ST.d:(mode==='easy'?1:mode==='spot'?2:mode==='medium'?3:6);}
 function chooseCat(d){
   var av=unlocked(d);
   var fresh=av.filter(function(c){return (!ST.introduced[c]&&!isAtomic(c))||(!ST.introduced[c]&&c==='fly');});
@@ -515,6 +516,8 @@ function startTrial(){
   answered=false;$('note').textContent='';
   // Easy mode: direct spread rate drill — skip implied identification
   if(mode==='easy'){startEasyTrial();return;}
+  // Spot mode: identify only — no rate entry
+  if(mode==='spot'){startSpotTrial();return;}
   showSection('trial');
   var d=effD();
   var c=chooseCat(d);
@@ -531,6 +534,54 @@ function startTrial(){
   var lim=tempoOn?tempoMs(d):0;
   setTempo(lim);
   startT=performance.now();
+}
+
+// Spot mode: identify the implied — no rate entry, tap and done
+function startSpotTrial(){
+  var d=effD();
+  var c=chooseCat(d);
+  if(!ST.introduced[c]&&c!=='spread'){showIntro(c,d);return;}
+  cur=genProblem(d,c,true);   // always spot (multiple-choice identify)
+  cur.cat=c;cur.format='spot';cur.d=d;
+  cur.answer=cur.model[0];
+  cur.idCorrect=false;
+  renderQuotes(cur);
+  $('stageEyebrow').textContent='SPOT IT · '+catName(c).toUpperCase();
+  renderLevelbar();
+  $('tempoBar').classList.add('hidden');
+  showSection('trial');
+  renderSpot();
+}
+
+// Spot mode answer — skip rate phase entirely
+function spotFinalize(idCorrect,el){
+  answered=true;
+  var rt=performance.now()-startT;
+  doFlash(idCorrect);
+  var c=cur.cat,C=catSt(c);
+  C.att++;ST.totAtt++;
+  if(idCorrect){C.cor++;ST.totCor++;ST.streak++;if(ST.streak>ST.bestStreak)ST.bestStreak=ST.streak;}
+  else{ST.streak=0;lastMiss=c;}
+  C.str=C.str*0.7+(idCorrect?0.3:0);
+  if(idCorrect){C.rt.push(rt);if(C.rt.length>30)C.rt.shift();ST.rtAll.push(rt);if(ST.rtAll.length>60)ST.rtAll.shift();if(ST.bestRT==null||rt<ST.bestRT)ST.bestRT=rt;}
+  recent.push(c);if(recent.length>6)recent.shift();
+  save();renderScore();renderLevelbar();
+  showSection('result');
+  var v=$('verdict');
+  v.className='verdict '+(idCorrect?'right':'wrong2');
+  v.innerHTML='<span class="dot"></span>'+(idCorrect?'CLEAN.':'MISS.');
+  $('rtText').textContent=(rt/1000).toFixed(2)+'s';
+  // Result: just the ladder and implied name — no rate row
+  renderLadder($('ladder'),cur,true);
+  modelChips($('modelChips'),cur);
+  $('rateResult').innerHTML='';
+  $('work').innerHTML='';
+  var m=buildMaps(cur.quotes),cancelled=[];
+  for(var t=m.lo;t<=m.hi;t++){if(Math.min(m.recv[t]||0,m.pay[t]||0)>0)cancelled.push(lbl(cur,t));}
+  var ex=cancelled.length?('The '+cancelled.join(', ')+' leg'+(cancelled.length>1?'s':'')+' cancel. '):'';
+  ex+='Implied: '+cur.model.map(function(s){return joinT(cur,s.t)+' '+s.side+' ('+catName(s.type)+')';}).join(' + ')+'.';
+  $('explain').textContent=ex;
+  $('nextBtn').focus();
 }
 
 // Easy mode: show two real tenor rates, ask player to compute the spread
@@ -596,10 +647,12 @@ function renderSpot(){
   $('trialArea').querySelectorAll('.opt').forEach(function(b){b.addEventListener('click',function(){if(answered)return;spotAnswer(+b.dataset.i,b);});});
 }
 function spotAnswer(i,el){
+  if(answered)return;
   var correct=sameNet(netOf([structToLeg(cur.options[i])]),cur.net);
   $('trialArea').querySelectorAll('.opt').forEach(function(b,j){var o=cur.options[j];var ok=sameNet(netOf([structToLeg(o)]),cur.net);if(ok)b.classList.add('correct');else b.classList.add('dim');if(j===i&&!ok)b.classList.replace('dim','wrong');});
   doFlash(correct);spawnPopup(correct?'+IMPLIED':'MISS',correct,el);
   cur.idCorrect=correct;
+  if(mode==='spot'){setTimeout(function(){spotFinalize(correct,el);},600);return;}
   setTimeout(function(){goRate();},650);
 }
 

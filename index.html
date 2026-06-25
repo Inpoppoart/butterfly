@@ -120,7 +120,8 @@ body{background:radial-gradient(1400px 700px at 50% -10%,#0e1d38 0%,transparent 
 .rate-line{font-family:var(--mono);font-size:.78rem;color:var(--muted);text-align:center;margin-bottom:.4rem}
 .rate-line b{color:var(--cyan)}
 .rate-hint{font-family:var(--pixel);font-size:.34rem;color:var(--muted);text-align:center;margin-bottom:.55rem;letter-spacing:.04em;opacity:.7}
-.answer-wrap{display:flex;align-items:center;justify-content:center;margin:.2rem 0 .55rem}
+.answer-wrap{display:flex;align-items:baseline;justify-content:center;gap:.4rem;margin:.2rem 0 .55rem}
+.answer-unit{font-family:var(--pixel);font-size:.45rem;color:var(--muted);letter-spacing:.04em}
 .answer-disp{font-family:var(--mono);font-weight:700;font-size:1.7rem;color:var(--green);background:var(--bg2);border:1.5px solid var(--border2);border-radius:10px;padding:.4rem .9rem;min-width:170px;text-align:center;text-shadow:0 0 12px rgba(57,255,139,.4)}
 .answer-disp.empty{color:var(--muted);text-shadow:none}
 .keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem;max-width:300px;margin:0 auto}
@@ -208,7 +209,7 @@ body{background:radial-gradient(1400px 700px at 50% -10%,#0e1d38 0%,transparent 
   </div>
 
   <div id="boardPanel" class="board-panel hidden">
-    <div class="board-head"><span>CURVE (MID)</span><span class="board-meta">spreads &amp; flies quote ∓0.125 two-way</span></div>
+    <div class="board-head"><span>CURVE — MID (BPS)</span><span class="board-meta">spreads &amp; flies in bps</span></div>
     <div class="board-grid" id="boardGrid"></div>
   </div>
 
@@ -235,7 +236,7 @@ body{background:radial-gradient(1400px 700px at 50% -10%,#0e1d38 0%,transparent 
     <div class="q-text" id="rateQText">NOW PRICE IT</div>
     <div class="rate-line" id="rateLine"></div>
     <div class="rate-hint" id="rateHint"></div>
-    <div class="answer-wrap"><div class="answer-disp empty" id="answerDisp">0</div></div>
+    <div class="answer-wrap"><div class="answer-disp empty" id="answerDisp">0</div><span class="answer-unit">bps</span></div>
     <div class="keypad" id="keypad"></div>
     <div class="note" id="rateNote"></div>
   </section>
@@ -269,13 +270,15 @@ body{background:radial-gradient(1400px 700px at 50% -10%,#0e1d38 0%,transparent 
 function $(id){return document.getElementById(id);}
 
 // ===================== MARKET DATA =====================
+// Curve mid levels in basis points (a normal, rising swap curve).
+// Spreads (far−near) are positive; butterflies are genuinely signed.
 var TEN=[
- {k:'1m',px:97.8125},{k:'6m',px:102.3125},{k:'9m',px:109.0625},{k:'1y',px:115.375},
- {k:'18m',px:128.375},{k:'2y',px:140.375},{k:'3y',px:159.875},{k:'4y',px:176},
- {k:'5y',px:190.375},{k:'6y',px:203.25},{k:'7y',px:215.25},{k:'8y',px:226.5},
- {k:'9y',px:237.25},{k:'10y',px:247.375},{k:'11y',px:256.625},{k:'12y',px:265.125},
- {k:'13y',px:272.895},{k:'14y',px:280.0638},{k:'15y',px:286.75},{k:'20y',px:312.625},
- {k:'25y',px:326},{k:'30y',px:331.625}
+ {k:'1m',px:380},{k:'6m',px:383},{k:'9m',px:387},{k:'1y',px:391},
+ {k:'18m',px:398},{k:'2y',px:405},{k:'3y',px:417},{k:'4y',px:427},
+ {k:'5y',px:435},{k:'6y',px:443},{k:'7y',px:450},{k:'8y',px:457},
+ {k:'9y',px:463},{k:'10y',px:470},{k:'11y',px:475},{k:'12y',px:480},
+ {k:'13y',px:485},{k:'14y',px:489},{k:'15y',px:493},{k:'20y',px:509},
+ {k:'25y',px:517},{k:'30y',px:520}
 ];
 function fmt(x){if(x===''||x==null)return'';var n=+x;if(isNaN(n))return String(x);return (Math.round(n*10000)/10000).toString();}
 function signed(x){return (+x>0?'+':'')+fmt(x);}

@@ -209,7 +209,7 @@ body{background:radial-gradient(1400px 700px at 50% -10%,#0e1d38 0%,transparent 
   </div>
 
   <div id="boardPanel" class="board-panel hidden">
-    <div class="board-head"><span>CURVE — MID (BPS)</span><span class="board-meta">spreads &amp; flies in bps</span></div>
+    <div class="board-head"><span>CURVE (MID)</span><span class="board-meta">spreads &amp; flies are differences of these mids</span></div>
     <div class="board-grid" id="boardGrid"></div>
   </div>
 
@@ -236,7 +236,7 @@ body{background:radial-gradient(1400px 700px at 50% -10%,#0e1d38 0%,transparent 
     <div class="q-text" id="rateQText">NOW PRICE IT</div>
     <div class="rate-line" id="rateLine"></div>
     <div class="rate-hint" id="rateHint"></div>
-    <div class="answer-wrap"><div class="answer-disp empty" id="answerDisp">0</div><span class="answer-unit">bps</span></div>
+    <div class="answer-wrap"><div class="answer-disp empty" id="answerDisp">0</div></div>
     <div class="keypad" id="keypad"></div>
     <div class="note" id="rateNote"></div>
   </section>
@@ -270,15 +270,14 @@ body{background:radial-gradient(1400px 700px at 50% -10%,#0e1d38 0%,transparent 
 function $(id){return document.getElementById(id);}
 
 // ===================== MARKET DATA =====================
-// Curve mid levels in basis points (a normal, rising swap curve).
-// Spreads (far−near) are positive; butterflies are genuinely signed.
+// Curve mid prices from Data.xlsx (Jul 2026). Long end inverts 35y→40y.
 var TEN=[
- {k:'1m',px:380},{k:'6m',px:383},{k:'9m',px:387},{k:'1y',px:391},
- {k:'18m',px:398},{k:'2y',px:405},{k:'3y',px:417},{k:'4y',px:427},
- {k:'5y',px:435},{k:'6y',px:443},{k:'7y',px:450},{k:'8y',px:457},
- {k:'9y',px:463},{k:'10y',px:470},{k:'11y',px:475},{k:'12y',px:480},
- {k:'13y',px:485},{k:'14y',px:489},{k:'15y',px:493},{k:'20y',px:509},
- {k:'25y',px:517},{k:'30y',px:520}
+ {k:'1m',px:97.6875},{k:'6m',px:104.125},{k:'9m',px:111.1875},{k:'1y',px:117.75},
+ {k:'18m',px:130.4375},{k:'2y',px:142.125},{k:'3y',px:161.125},{k:'4y',px:177},
+ {k:'5y',px:191.125},{k:'6y',px:203.8125},{k:'7y',px:215.75},{k:'8y',px:227.0625},
+ {k:'9y',px:237.8125},{k:'10y',px:247.9375},{k:'11y',px:257.25},{k:'12y',px:265.9375},
+ {k:'13y',px:273.8175},{k:'14y',px:281.0613},{k:'15y',px:287.6875},{k:'20y',px:313.4375},
+ {k:'25y',px:327.0625},{k:'30y',px:332.9375},{k:'35y',px:334.6875},{k:'40y',px:334.1875}
 ];
 function fmt(x){if(x===''||x==null)return'';var n=+x;if(isNaN(n))return String(x);return (Math.round(n*10000)/10000).toString();}
 function signed(x){return (+x>0?'+':'')+fmt(x);}
@@ -536,13 +535,15 @@ function startTrial(){
 
 // Easy mode: show two real tenor rates, ask player to compute the spread
 function startEasyTrial(){
-  // Pick near and far tenor (gap 1-4 steps to keep arithmetic reasonable)
-  var aIdx=ri(0,TEN.length-3);
-  var gap=ri(1,Math.min(4,TEN.length-2-aIdx));
-  var bIdx=aIdx+gap;
-  var tenA=TEN[aIdx],tenB=TEN[bIdx];
-  // Spread rate: far - near (always positive on normal curve)
-  var spreadRate=Math.round((tenB.px-tenA.px)*10000)/10000;
+  // Pick a pair where far > near (avoids the 35y→40y long-end inversion).
+  var tenA,tenB,spreadRate,tries=0;
+  do{
+    var aIdx=ri(0,TEN.length-3);
+    var gap=ri(1,Math.min(4,TEN.length-2-aIdx));
+    var bIdx=aIdx+gap;
+    tenA=TEN[aIdx];tenB=TEN[bIdx];
+    spreadRate=Math.round((tenB.px-tenA.px)*10000)/10000;
+  }while(spreadRate<=0&&++tries<20);
 
   cur={easyMode:true,tenA:tenA,tenB:tenB,rateAns:spreadRate,cat:'spread',d:1,idCorrect:true,format:'easy'};
 

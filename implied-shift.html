@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#05060a">
+<title>SHIFT — Implied Price Shift Trainer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#05060a;--panel:#0d1120;--panel2:#131a2e;
+  --border:#1d2740;--border2:#2b3a5e;--text:#cdd8f0;--muted:#5a6b92;
+  --green:#39ff8b;--gold:#ffd23f;--cyan:#5bd1ff;--red:#ff4d5e;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --sans:Inter,-apple-system,system-ui,sans-serif;
+  /* heat-map: diverging red↔blue, neutral midpoint — validated for CVD + dark surface */
+  --heat-w3:#e66767;--heat-w2:#b84a4a;--heat-w1:#7a3b3b;
+  --heat-mid:#383835;
+  --heat-s1:#184f95;--heat-s2:#2a78d6;--heat-s3:#5598e7;
+}
+html,body{height:100%}
+body{background:radial-gradient(1200px 600px at 50% -10%,#0e1d38 0%,transparent 60%),var(--bg);
+  color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased}
+.app{max-width:780px;margin:0 auto;padding:.9rem .9rem 3rem}
+.hdr{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--border);
+  padding-bottom:.5rem;margin-bottom:.8rem}
+.hdr h1{font-family:var(--mono);font-size:1.05rem;letter-spacing:.14em;color:var(--green)}
+.hdr .sub{font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.hud{display:flex;gap:1.1rem;font-family:var(--mono);font-size:.75rem;color:var(--muted);margin-bottom:.7rem;flex-wrap:wrap}
+.hud b{color:var(--text)}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:.7rem .9rem;margin-bottom:.7rem}
+.panel-title{font-family:var(--mono);font-size:.62rem;letter-spacing:.18em;color:var(--muted);margin-bottom:.45rem}
+.panel-title .conv{color:var(--cyan)}
+.row{display:flex;align-items:baseline;gap:.9rem;padding:.28rem .5rem;border-radius:6px;border-left:3px solid transparent}
+.row.leg{border-left-color:var(--border2);background:rgba(43,58,94,.14)}
+.row.hot{animation:rowHot 2s ease-out}
+@keyframes rowHot{0%{background:rgba(255,210,63,.22);border-left-color:var(--gold)}
+  70%{background:rgba(255,210,63,.10);border-left-color:var(--gold)}100%{background:transparent}}
+.tenor{font-family:var(--mono);font-weight:700;color:var(--gold);width:4.4rem;font-size:1rem}
+.mkt{font-family:var(--mono);font-size:1.25rem;font-weight:600;white-space:nowrap}
+.mkt .slash{color:var(--muted);font-weight:400}
+.px{display:inline-block;padding:0 .15rem;border-radius:4px}
+.px.flash-up{animation:flashUp 2s ease-out}
+.px.flash-down{animation:flashDown 2s ease-out}
+@keyframes flashUp{0%{background:rgba(57,255,139,.55);color:#04180c}60%{background:rgba(57,255,139,.18)}100%{background:transparent}}
+@keyframes flashDown{0%{background:rgba(255,77,94,.55);color:#1c0407}60%{background:rgba(255,77,94,.18)}100%{background:transparent}}
+.was{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-left:.3rem}
+.implied-wrap{display:flex;gap:.7rem;flex-wrap:wrap}
+.implied{flex:1 1 200px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:.6rem .8rem;margin-bottom:.7rem}
+.implied.target{border-color:var(--border2);box-shadow:0 0 12px rgba(91,209,255,.12)}
+.imp-head{font-family:var(--mono);font-size:.8rem;color:var(--gold);display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap}
+.imp-head .formula{color:var(--muted);font-size:.68rem}
+.imp-head .tgt{color:var(--cyan);font-size:.62rem;letter-spacing:.18em;border:1px solid var(--border2);border-radius:4px;padding:0 .3rem}
+.imp-mkt{font-family:var(--mono);font-size:1.7rem;font-weight:700;margin:.15rem 0;white-space:nowrap}
+.imp-mkt .slash{color:var(--muted);font-weight:400}
+.imp-note{font-family:var(--mono);font-size:.62rem;color:var(--muted)}
+.shock{display:flex;align-items:center;gap:.8rem;background:var(--panel2);border:1px solid var(--border2);
+  border-radius:10px;padding:.6rem .9rem;margin-bottom:.7rem}
+.shock-label{font-family:var(--mono);font-size:.6rem;letter-spacing:.2em;color:var(--bg);
+  background:var(--gold);border-radius:4px;padding:.15rem .4rem;font-weight:700}
+.shock-text{font-family:var(--mono);font-size:1.05rem;font-weight:600}
+.clock{margin-left:auto;font-family:var(--mono);font-size:1rem;color:var(--red);font-weight:700}
+.ansform{display:flex;flex-direction:column;gap:.35rem;margin-bottom:.7rem}
+.ansform input{font-family:var(--mono);font-size:1.35rem;font-weight:600;color:var(--text);
+  background:var(--panel);border:1px solid var(--border2);border-radius:10px;padding:.55rem .8rem;width:100%;outline:none}
+.ansform input:focus{border-color:var(--cyan);box-shadow:0 0 10px rgba(91,209,255,.15)}
+.hint{font-family:var(--mono);font-size:.68rem;color:var(--muted)}
+.err{font-family:var(--mono);font-size:.75rem;color:var(--red)}
+.fb{border-radius:10px;padding:.7rem .9rem;margin-bottom:.7rem;border:1px solid}
+.fb.ok{background:rgba(57,255,139,.07);border-color:rgba(57,255,139,.4)}
+.fb.bad{background:rgba(255,77,94,.07);border-color:rgba(255,77,94,.45)}
+.fb-line1{font-family:var(--mono);font-size:.95rem;font-weight:700;display:flex;gap:1rem;align-items:baseline;flex-wrap:wrap}
+.fb.ok .verdict{color:var(--green)}.fb.bad .verdict{color:var(--red)}
+.fb-line1 .ms{color:var(--cyan);font-weight:400;font-size:.8rem}
+.fb-line1 .stk{color:var(--muted);font-weight:400;font-size:.8rem}
+.fb-ans{font-family:var(--mono);font-size:1.5rem;font-weight:700;margin:.25rem 0}
+.fb-deriv{font-size:.85rem;color:var(--text);opacity:.9;margin:.2rem 0}
+.fb-swap{font-family:var(--mono);font-size:.75rem;color:var(--gold)}
+.fb-next{font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:.3rem}
+.keysbar{font-family:var(--mono);font-size:.65rem;color:var(--muted);text-align:center;margin-top:.4rem}
+.keysbar b{color:var(--text)}
+.menu .lvl{display:flex;gap:.8rem;align-items:baseline;padding:.5rem .6rem;border:1px solid var(--border);
+  border-radius:8px;margin-bottom:.5rem;background:var(--panel)}
+.menu .lvl .num{font-family:var(--mono);font-weight:700;color:var(--green);font-size:1.1rem}
+.menu .lvl .nm{font-family:var(--mono);font-weight:600;color:var(--gold);width:6.5rem}
+.menu .lvl .ds{font-size:.8rem;color:var(--muted)}
+.menu .opt{font-family:var(--mono);font-size:.8rem;color:var(--muted);margin-top:.6rem}
+.menu .opt b{color:var(--cyan)}
+.tiles{display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:.8rem}
+.tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:.5rem .8rem;min-width:100px;text-align:center}
+.tile .v{font-family:var(--mono);font-size:1.4rem;font-weight:700;color:var(--green)}
+.tile .l{font-family:var(--mono);font-size:.58rem;letter-spacing:.14em;color:var(--muted);margin-top:.15rem}
+.heat{border-collapse:separate;border-spacing:2px;width:100%;font-family:var(--mono)}
+.heat th{font-size:.58rem;letter-spacing:.08em;color:var(--muted);font-weight:400;padding:.2rem .3rem;text-align:center}
+.heat th.rowlab{text-align:left}
+.heat td.rowlab{font-size:.68rem;color:var(--text);padding:.2rem .4rem;white-space:nowrap}
+.heat td.cell{width:23%;text-align:center;border-radius:5px;padding:.3rem .2rem}
+.heat td.cell .a{font-size:.85rem;font-weight:700}
+.heat td.cell .m{font-size:.58rem;opacity:.85}
+.heat td.cell.empty{background:var(--panel);border:1px solid var(--border);color:var(--muted)}
+.legend{display:flex;align-items:center;gap:.35rem;font-family:var(--mono);font-size:.6rem;color:var(--muted);margin-top:.5rem;flex-wrap:wrap}
+.legend .sw{width:22px;height:12px;border-radius:3px;display:inline-block}
+.testfail{background:rgba(255,77,94,.12);border:1px solid var(--red);border-radius:8px;padding:.6rem .8rem;
+  font-family:var(--mono);font-size:.75rem;color:var(--red);margin-bottom:.8rem;white-space:pre-wrap}
+.loadfail{font-family:var(--mono);color:var(--red);padding:2rem;text-align:center}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script>window.React||document.write('<script crossorigin src="https:\/\/cdn.jsdelivr.net\/npm\/react@18.3.1\/umd\/react.production.min.js"><\/script>')</script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script>window.ReactDOM||document.write('<script crossorigin src="https:\/\/cdn.jsdelivr.net\/npm\/react-dom@18.3.1\/umd\/react-dom.production.min.js"><\/script>')</script>
+<script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+<script>window.Babel||document.write('<script src="https:\/\/cdn.jsdelivr.net\/npm\/@babel\/standalone@7.26.4\/babel.min.js"><\/script>')</script>
+
+<script type="text/babel" data-presets="react">
+/* =====================================================================
+   SHIFT — implied price shift trainer.
+   Quote convention: OFFER / BID (offer = pay side, higher, shown first;
+   bid = receive side, lower, shown second). Toggleable to bid/offer.
+   All prices are integers in 16ths of a basis point; ticks are 1/8 bp.
+   ===================================================================== */
+
+// ==PURE-BEGIN== (plain JS, no JSX — extracted and run under node for tests)
+
+// ---- price math ----
+function toSixteenths(whole, eighths){ return whole*16 + (eighths||0)*2; }
+function fromDecimal(dec){
+  const v = dec*16, r = Math.round(v);
+  return Math.abs(v-r) < 1e-6 ? r : null;
+}
+function formatPrice(s16){
+  const neg = s16 < 0, a = Math.abs(s16);
+  const whole = Math.floor(a/16), rem = a%16;
+  const frac = rem%2===0 ? (rem/2)+'/8' : rem+'/16';
+  return (neg?'-':'') + whole + ' ' + frac;
+}
+function formatSize(s16){ return (s16/2) + '/8'; }
+
+// ---- markets & structures ----
+// market: {bid, offer} in 16ths, bid < offer. bid = receive side, offer = pay side.
+function deriveImplied(st, board){
+  if (st.type === 'spread'){
+    const n = board[st.near], f = board[st.far];
+    return { bid: f.bid - n.offer, offer: f.offer - n.bid };
+  }
+  if (st.type === 'fly'){
+    const n = board[st.near], b = board[st.belly], f = board[st.far];
+    return { bid: 2*b.bid - n.offer - f.offer, offer: 2*b.offer - n.bid - f.bid };
+  }
+  const a = board[st.leg1], b = board[st.leg2];
+  return { bid: a.bid + b.bid, offer: a.offer + b.offer };
+}
+function structLegs(st){
+  if (st.type === 'spread') return [{role:'near',key:st.near},{role:'far',key:st.far}];
+  if (st.type === 'fly') return [{role:'nearWing',key:st.near},{role:'belly',key:st.belly},{role:'farWing',key:st.far}];
+  return [{role:'leg1',key:st.leg1},{role:'leg2',key:st.leg2}];
+}
+// shock: {key, side:'bid'|'offer', dir:'improve'|'worsen', size} — size in 16ths.
+// improve = market tightens (bid up / offer down); worsen = widens.
+function applyShock(board, shock){
+  const m = board[shock.key];
+  let bid = m.bid, offer = m.offer;
+  if (shock.side === 'bid') bid += (shock.dir === 'improve' ? shock.size : -shock.size);
+  else offer += (shock.dir === 'improve' ? -shock.size : shock.size);
+  const next = Object.assign({}, board);
+  next[shock.key] = { bid, offer };
+  return next;
+}
+
+// ---- answer parsing ----
+// A single price token: "50 5/8" | "50.625" | "51" (whole bp) | "5" (eighths
+// shorthand, resolved to the price nearest prevS16 with that displayed eighth).
+function parsePrice(tok, prevS16){
+  tok = tok.trim();
+  let m;
+  if ((m = tok.match(/^(-?)(\d+)\s+([0-7])\/8$/)))
+    return (m[1]?-1:1) * ((+m[2])*16 + (+m[3])*2);
+  if ((m = tok.match(/^(-?)(\d+)\s+(\d{1,2})\/16$/))){
+    if (+m[3] > 15) return null;
+    return (m[1]?-1:1) * ((+m[2])*16 + (+m[3]));
+  }
+  if (/^-?\d+\.\d+$/.test(tok)) return fromDecimal(parseFloat(tok));
+  if (/^[0-7]$/.test(tok) && prevS16 != null){
+    const rem = (+tok)*2;
+    let best = null;
+    for (let c = prevS16-16; c <= prevS16+16; c++){
+      if (Math.abs(c)%16 !== rem) continue;
+      if (best === null || Math.abs(c-prevS16) < Math.abs(best-prevS16)) best = c;
+    }
+    return best;
+  }
+  if (/^-?\d+$/.test(tok)) return parseInt(tok,10)*16;
+  return null;
+}
+// Split "51 4/8 / 50 5/8", "51.5/50.625", "4/5", "4 5" into two price tokens.
+function splitAnswer(text){
+  const t = text.trim();
+  if (!t) return null;
+  const prot = t.replace(/([0-7])\s*\/\s*(8|16)\b/g, '$1_$2');
+  let parts = prot.split(/\s*[\/,;]\s*/).filter(function(s){ return s.trim() !== ''; });
+  if (parts.length === 1){
+    const mm = prot.match(/^([0-7])\s+([0-7])$/);
+    if (mm) parts = [mm[1], mm[2]];
+  }
+  if (parts.length !== 2) return null;
+  return parts.map(function(p){ return p.replace(/_(8|16)/g, '/$1').trim(); });
+}
+// conv 'ob' → typed order is offer then bid; 'bo' → bid then offer.
+// prev = previous implied {bid, offer} (for shorthand handle resolution).
+function parseAnswer(text, conv, prev){
+  if (/^u(nch(anged)?)?$/i.test(text.trim())) return { kind:'unchanged' };
+  const parts = splitAnswer(text);
+  if (!parts) return null;
+  const first = conv === 'ob' ? 'offer' : 'bid';
+  const second = conv === 'ob' ? 'bid' : 'offer';
+  const p1 = parsePrice(parts[0], prev ? prev[first] : null);
+  const p2 = parsePrice(parts[1], prev ? prev[second] : null);
+  if (p1 === null || p2 === null) return null;
+  const out = { kind:'market' };
+  out[first] = p1; out[second] = p2;
+  return out;
+}
+
+// ---- board generation ----
+var TENORS = [
+  {k:'2y', mid:30}, {k:'5y', mid:45}, {k:'7y', mid:70},
+  {k:'10y', mid:95}, {k:'20y', mid:150}, {k:'30y', mid:180}
+];
+function ri(a,b){ return a + Math.floor(Math.random()*(b-a+1)); }
+function pick(a){ return a[ri(0,a.length-1)]; }
+function sl(k){ return k.replace('y','') + 's'; }   // '10y' → '10s'
+
+function mkTwoWay(midBp){
+  const mid16 = Math.round(midBp*8)*2;              // eighth-aligned 16ths
+  const w = pick([4,6,8]);
+  const bid = mid16 - (w===6 ? 2 : w/2);
+  return { bid: bid, offer: bid + w };
+}
+function genOutrights(){
+  const board = {};
+  let prevMid = -1e9;
+  TENORS.forEach(function(t){
+    let mid = t.mid + (Math.random()*10 - 5);
+    if (mid < prevMid + 8) mid = prevMid + 8;       // keep the curve rising
+    prevMid = mid;
+    board[t.k] = mkTwoWay(mid);
+  });
+  return board;
+}
+var SPREAD_KEYS = [];
+for (let i = 0; i < TENORS.length-1; i++) SPREAD_KEYS.push(sl(TENORS[i].k) + sl(TENORS[i+1].k));
+function genSpreadBoard(){
+  const board = {};
+  for (let i = 0; i < TENORS.length-1; i++){
+    const mid = (TENORS[i+1].mid - TENORS[i].mid) + (Math.random()*6 - 3);
+    const mid16 = Math.round(mid*8)*2;
+    const w = pick([4,6]);
+    const bid = mid16 - (w===6 ? 2 : w/2);
+    board[SPREAD_KEYS[i]] = { bid: bid, offer: bid + w };
+  }
+  return board;
+}
+function mkSpread(nearK, farK){ return { type:'spread', near:nearK, far:farK, label: sl(nearK)+sl(farK) }; }
+function mkFly(nK, bK, fK){ return { type:'fly', near:nK, belly:bK, far:fK, label: sl(nK)+sl(bK)+sl(fK) }; }
+function pickPair(){ const i = ri(0, TENORS.length-2), j = ri(i+1, TENORS.length-1); return [TENORS[i].k, TENORS[j].k]; }
+function pickTriple(){
+  const idx = [];
+  while (idx.length < 3){ const v = ri(0, TENORS.length-1); if (idx.indexOf(v) < 0) idx.push(v); }
+  idx.sort(function(a,b){ return a-b; });
+  return idx.map(function(i){ return TENORS[i].k; });
+}
+function genRound(level){
+  if (level === 3){
+    const board = genSpreadBoard();
+    const i = ri(0, SPREAD_KEYS.length-2);
+    const st = { type:'chain', leg1: SPREAD_KEYS[i], leg2: SPREAD_KEYS[i+1],
+                 label: sl(TENORS[i].k) + sl(TENORS[i+2].k) };
+    return { board: board, boardKeys: SPREAD_KEYS.slice(), structures: [st], boardKind: 'SPREAD MARKETS' };
+  }
+  const board = genOutrights();
+  const keys = TENORS.map(function(t){ return t.k; });
+  if (level === 1){
+    const p = pickPair();
+    return { board: board, boardKeys: keys, structures: [mkSpread(p[0], p[1])], boardKind: 'OUTRIGHTS' };
+  }
+  if (level === 2){
+    const t = pickTriple();
+    return { board: board, boardKeys: keys, structures: [mkFly(t[0], t[1], t[2])], boardKind: 'OUTRIGHTS' };
+  }
+  const p1 = pickPair(); const s1 = mkSpread(p1[0], p1[1]);
+  const t3 = pickTriple(); const f = mkFly(t3[0], t3[1], t3[2]);
+  let s2 = s1;
+  for (let g = 0; g < 30 && s2.label === s1.label; g++){ const p2 = pickPair(); s2 = mkSpread(p2[0], p2[1]); }
+  const structures = s2.label === s1.label ? [s1, f] : [s1, f, s2];
+  return { board: board, boardKeys: keys, structures: structures, boardKind: 'OUTRIGHTS' };
+}
+
+// ---- adaptive question sampling ----
+function patKey(type, role, side, dir){ return type + '|' + role + '|' + side + '|' + dir; }
+function median(a){
+  if (!a.length) return 0;
+  const s = a.slice().sort(function(x,y){ return x-y; });
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m-1]+s[m])/2;
+}
+function comboWeight(stats, key){
+  const s = stats[key];
+  if (!s || !s.n) return 2;                          // unseen: explore
+  const acc = s.ok / s.n;
+  let w = 0.5 + 3*(1-acc);
+  w += Math.max(0, Math.min(1.5, median(s.times)/8000 - 0.5));   // slow → resurface
+  if (s.lastWrong) w += 1.5;                         // just missed → resurface soon
+  return Math.max(0.25, w);
+}
+function weightedPick(items, weights){
+  let tot = 0;
+  for (let i = 0; i < weights.length; i++) tot += weights[i];
+  let r = Math.random()*tot;
+  for (let i = 0; i < items.length; i++){ r -= weights[i]; if (r <= 0) return items[i]; }
+  return items[items.length-1];
+}
+function legalSizes(mkt, side, dir){
+  const w = mkt.offer - mkt.bid;
+  return [2,4].filter(function(s){
+    if (dir === 'improve') return w - s >= 2;        // never lock/cross the market
+    return w + s <= 12;                              // don't drift absurdly wide
+  });
+}
+function recordResult(stats, key, ok, ms){
+  const s = stats[key] || (stats[key] = { n:0, ok:0, times:[] });
+  s.n++; if (ok) s.ok++;
+  s.lastWrong = !ok;
+  s.times.push(ms);
+  if (s.times.length > 50) s.times.shift();
+}
+function genQuestion(opts){
+  const st = opts.structures[opts.targetIdx];
+  const legs = structLegs(st);
+  const legKeys = legs.map(function(l){ return l.key; });
+  const wantDist = opts.level >= 4 && Math.random() < 0.25;
+  let cands = [];
+  function addCands(keyRoles){
+    keyRoles.forEach(function(kr){
+      ['bid','offer'].forEach(function(side){
+        ['improve','worsen'].forEach(function(dir){
+          const sizes = legalSizes(opts.board[kr.key], side, dir);
+          if (sizes.length) cands.push({ key: kr.key, role: kr.role, side: side, dir: dir, sizes: sizes });
+        });
+      });
+    });
+  }
+  if (wantDist){
+    addCands(opts.boardKeys.filter(function(k){ return legKeys.indexOf(k) < 0; })
+      .map(function(k){ return { key:k, role:'dist' }; }));
+  }
+  if (!cands.length) addCands(legs);
+  const weights = cands.map(function(c){ return comboWeight(opts.stats, patKey(st.type, c.role, c.side, c.dir)); });
+  const c = weightedPick(cands, weights);
+  const shock = { key: c.key, side: c.side, dir: c.dir, size: pick(c.sizes) };
+  const post = applyShock(opts.board, shock);
+  return {
+    targetIdx: opts.targetIdx,
+    structure: st,
+    shock: shock,
+    isDist: c.role === 'dist',
+    patternKey: patKey(st.type, c.role, c.side, c.dir),
+    pre: opts.board,
+    post: post,
+    oldImp: deriveImplied(st, opts.board),
+    newImp: deriveImplied(st, post)
+  };
+}
+
+// ---- feedback text ----
+function upK(k){ return /^\d+y$/.test(k) ? k.toUpperCase() : k; }
+function sideName(s){ return s; } // 'bid' | 'offer'
+function shockText(shock, post){
+  return upK(shock.key) + ' ' + sideName(shock.side) + ' ' +
+    (shock.dir === 'improve' ? 'improves' : 'worsens') + ' ' + formatSize(shock.size) +
+    ' → ' + formatPrice(post[shock.key][shock.side]);
+}
+function formulaCaption(st){
+  if (st.type === 'spread') return upK(st.far) + ' − ' + upK(st.near);
+  if (st.type === 'fly') return '2×' + upK(st.belly) + ' − ' + upK(st.near) + ' − ' + upK(st.far);
+  return st.leg1 + ' + ' + st.leg2;
+}
+function derivation(q){
+  const st = q.structure, shock = q.shock, post = q.post;
+  const F = formatPrice;
+  if (q.isDist)
+    return upK(shock.key) + ' is not a leg of ' + st.label + ' — the implied is unchanged. U was the answer.';
+  const movedSide = q.newImp.bid !== q.oldImp.bid ? 'bid' : 'offer';
+  const otherSide = movedSide === 'bid' ? 'offer' : 'bid';
+  let formula;
+  if (st.type === 'spread'){
+    const n = post[st.near], f = post[st.far];
+    formula = movedSide === 'bid'
+      ? upK(st.far)+' bid − '+upK(st.near)+' offer: '+F(f.bid)+' − '+F(n.offer)+' = '+F(q.newImp.bid)
+      : upK(st.far)+' offer − '+upK(st.near)+' bid: '+F(f.offer)+' − '+F(n.bid)+' = '+F(q.newImp.offer);
+  } else if (st.type === 'fly'){
+    const n = post[st.near], b = post[st.belly], f = post[st.far];
+    formula = movedSide === 'bid'
+      ? '2×'+F(b.bid)+' − '+F(n.offer)+' − '+F(f.offer)+' = '+F(q.newImp.bid)
+      : '2×'+F(b.offer)+' − '+F(n.bid)+' − '+F(f.bid)+' = '+F(q.newImp.offer);
+  } else {
+    const a = post[st.leg1], b = post[st.leg2];
+    formula = movedSide === 'bid'
+      ? F(a.bid)+' + '+F(b.bid)+' = '+F(q.newImp.bid)
+      : F(a.offer)+' + '+F(b.offer)+' = '+F(q.newImp.offer);
+  }
+  const twice = (st.type === 'fly' && shock.key === st.belly)
+    ? ' Belly counts twice — a ' + formatSize(shock.size) + ' change moves the implied ' + formatSize(shock.size*2) + '.'
+    : '';
+  return upK(shock.key) + ' ' + shock.side + ' feeds the implied ' + movedSide + ': ' + formula +
+    '. ' + otherSide.charAt(0).toUpperCase() + otherSide.slice(1) + ' side untouched.' + twice;
+}
+
+// ==PURE-END==
+
+// ==TESTS-BEGIN==
+function runTests(){
+  const failed = [];
+  let count = 0;
+  function eq(name, got, want){
+    count++;
+    const g = JSON.stringify(got), w = JSON.stringify(want);
+    if (g !== w) failed.push(name + ': got ' + g + ', want ' + w);
+  }
+  // conversions & display (reduce 10/16 → 5/8, keep 0/8, negatives)
+  eq('toSixteenths 45 2/8', toSixteenths(45,2), 724);
+  eq('fromDecimal 50.625', fromDecimal(50.625), 810);
+  eq('fromDecimal rejects off-grid', fromDecimal(50.63), null);
+  eq('format 45 2/8', formatPrice(724), '45 2/8');
+  eq('format reduces 10/16', formatPrice(730), '45 5/8');
+  eq('format keeps 0/8', formatPrice(736), '46 0/8');
+  eq('format negative', formatPrice(-566), '-35 3/8');
+
+  // WORKED EXAMPLE — spread 5s10s off 5y 724/732, 10y 1540/1548
+  const B = { '5y':{bid:724,offer:732}, '10y':{bid:1540,offer:1548}, '2y':{bid:480,offer:488} };
+  const SP = mkSpread('5y','10y');
+  eq('5s10s label', SP.label, '5s10s');
+  const imp0 = deriveImplied(SP, B);
+  eq('worked: implied before', imp0, {bid:808, offer:824});
+  eq('worked: display bid', formatPrice(imp0.bid), '50 4/8');
+  eq('worked: display offer', formatPrice(imp0.offer), '51 4/8');
+  const shock = { key:'5y', side:'offer', dir:'improve', size:2 };  // 45 6/8 → 45 5/8
+  const B2 = applyShock(B, shock);
+  eq('worked: 5y offer 732→730', B2['5y'], {bid:724, offer:730});
+  const imp1 = deriveImplied(SP, B2);
+  eq('worked: implied after', imp1, {bid:810, offer:824});
+  eq('worked: only bid moved, +1/8', [imp1.bid-imp0.bid, imp1.offer-imp0.offer], [2,0]);
+  eq('worked: new bid displays 50 5/8', formatPrice(imp1.bid), '50 5/8');
+
+  // FLY — belly change moves one side by 2×
+  const FLY = mkFly('2y','5y','10y');
+  const fi0 = deriveImplied(FLY, B);
+  eq('fly implied', fi0, {bid: 2*724-488-1548, offer: 2*732-480-1540});
+  const B3 = applyShock(B, { key:'5y', side:'bid', dir:'improve', size:2 });   // belly bid +1/8
+  const fi1 = deriveImplied(FLY, B3);
+  eq('fly: belly bid +1/8 → implied bid +2/8, offer flat',
+     [fi1.bid-fi0.bid, fi1.offer-fi0.offer], [4,0]);
+  const B3b = applyShock(B, { key:'5y', side:'offer', dir:'worsen', size:2 }); // belly offer +1/8
+  const fi2 = deriveImplied(FLY, B3b);
+  eq('fly: belly offer worsens 1/8 → implied offer +2/8', [fi2.bid-fi0.bid, fi2.offer-fi0.offer], [0,4]);
+  const B3c = applyShock(B, { key:'2y', side:'offer', dir:'improve', size:2 }); // wing offer −1/8
+  const fi3 = deriveImplied(FLY, B3c);
+  eq('fly: near-wing offer improves 1/8 → implied bid +1/8', [fi3.bid-fi0.bid, fi3.offer-fi0.offer], [2,0]);
+
+  // CHAIN — implied spread from two spread markets
+  const SB = { '2s5s':{bid:240,offer:246}, '5s10s':{bid:800,offer:806} };
+  const CH = { type:'chain', leg1:'2s5s', leg2:'5s10s', label:'2s10s' };
+  const ci0 = deriveImplied(CH, SB);
+  eq('chain implied', ci0, {bid:1040, offer:1052});
+  const SB2 = applyShock(SB, { key:'5s10s', side:'offer', dir:'worsen', size:4 });
+  const ci1 = deriveImplied(CH, SB2);
+  eq('chain: leg2 offer worsens 2/8 → implied offer +2/8', [ci1.bid-ci0.bid, ci1.offer-ci0.offer], [0,4]);
+
+  // DISTRACTOR — leg outside the structure moves nothing
+  const B4 = applyShock(B, { key:'2y', side:'bid', dir:'worsen', size:4 });
+  eq('distractor: 2y shock leaves 5s10s implied unchanged', deriveImplied(SP, B4), imp0);
+
+  // applyShock directions
+  eq('improve bid raises bid', applyShock(B,{key:'5y',side:'bid',dir:'improve',size:2})['5y'], {bid:726,offer:732});
+  eq('worsen bid lowers bid', applyShock(B,{key:'5y',side:'bid',dir:'worsen',size:2})['5y'], {bid:722,offer:732});
+  eq('worsen offer raises offer', applyShock(B,{key:'5y',side:'offer',dir:'worsen',size:4})['5y'], {bid:724,offer:736});
+
+  // parsing — offer/bid convention: first token is the offer
+  const prev = { bid:808, offer:824 };
+  eq('parse full', parseAnswer('51 4/8 / 50 5/8', 'ob', prev), {kind:'market', offer:824, bid:810});
+  eq('parse decimals', parseAnswer('51.5/50.625', 'ob', prev), {kind:'market', offer:824, bid:810});
+  eq('parse shorthand pair 4/5', parseAnswer('4/5', 'ob', prev), {kind:'market', offer:824, bid:810});
+  eq('parse shorthand pair "4 5"', parseAnswer('4 5', 'ob', prev), {kind:'market', offer:824, bid:810});
+  eq('parse unchanged', parseAnswer('u', 'ob', prev), {kind:'unchanged'});
+  eq('parse bid/offer order', parseAnswer('50 5/8 / 51 4/8', 'bo', prev), {kind:'market', bid:810, offer:824});
+  eq('parse garbage', parseAnswer('hello', 'ob', prev), null);
+  eq('parse whole bp', parsePrice('51', null), 816);
+  eq('shorthand crosses handle', parsePrice('0', 814), 816);    // 50 7/8 area → 51 0/8
+  eq('shorthand negative', parsePrice('3', -568), -566);        // near -35 4/8 → -35 3/8
+
+  // shock text (broker language)
+  eq('shock text', shockText(shock, B2), '5Y offer improves 1/8 → 45 5/8');
+  // legal sizes never cross the market
+  eq('legalSizes tight market', legalSizes({bid:724,offer:728}, 'offer', 'improve'), [2]);
+  return { count: count, failed: failed };
+}
+// ==TESTS-END==
+
+// =====================================================================
+// React app
+// =====================================================================
+const { useState, useEffect, useRef, useCallback } = React;
+
+const QUESTIONS_PER_ROUND = 20;
+const SPEED_MS = 10000;
+const LEVELS = [
+  { n:1, nm:'SPREADS', ds:'one target spread off the outright board' },
+  { n:2, nm:'FLIES',   ds:'belly moves are 2× — the classic trap' },
+  { n:3, nm:'CHAINS',  ds:'implied spread chained from two spread markets' },
+  { n:4, nm:'MIXED',   ds:'targets rotate, ~25% distractors — press U when your implied is untouched' },
+];
+const HEAT_ROWS = [
+  { t:'spread', role:'near',     label:'spread · near leg' },
+  { t:'spread', role:'far',      label:'spread · far leg' },
+  { t:'fly',    role:'nearWing', label:'fly · near wing' },
+  { t:'fly',    role:'belly',    label:'fly · belly (2×)' },
+  { t:'fly',    role:'farWing',  label:'fly · far wing' },
+  { t:'chain',  role:'leg1',     label:'chain · front leg' },
+  { t:'chain',  role:'leg2',     label:'chain · back leg' },
+  { t:'spread', role:'dist',     label:'distractor (spread)' },
+  { t:'fly',    role:'dist',     label:'distractor (fly)' },
+  { t:'chain',  role:'dist',     label:'distractor (chain)' },
+];
+const HEAT_COLS = [
+  { side:'bid',   dir:'improve', label:'BID IMPROVES' },
+  { side:'bid',   dir:'worsen',  label:'BID WORSENS' },
+  { side:'offer', dir:'improve', label:'OFFER IMPROVES' },
+  { side:'offer', dir:'worsen',  label:'OFFER WORSENS' },
+];
+// diverging accuracy scale (neutral band ~70–80%); every cell also shows text.
+function heatColor(acc){
+  if (acc < 0.35) return { bg:'var(--heat-w3)', ink:'#0b0e17' };
+  if (acc < 0.55) return { bg:'var(--heat-w2)', ink:'#f5f7ff' };
+  if (acc < 0.70) return { bg:'var(--heat-w1)', ink:'#f5f7ff' };
+  if (acc < 0.80) return { bg:'var(--heat-mid)', ink:'#e6ecfa' };
+  if (acc < 0.90) return { bg:'var(--heat-s1)', ink:'#f5f7ff' };
+  if (acc < 0.97) return { bg:'var(--heat-s2)', ink:'#f5f7ff' };
+  return { bg:'var(--heat-s3)', ink:'#0b0e17' };
+}
+
+function Mkt({ mkt, conv, flashSide, dir, qid, cls }){
+  const sides = conv === 'ob' ? ['offer','bid'] : ['bid','offer'];
+  return (
+    <span className={cls || 'mkt'}>
+      {sides.map((s, i) => (
+        <React.Fragment key={s}>
+          {i === 1 && <span className="slash"> / </span>}
+          <span key={(qid||0)+'-'+s}
+                className={'px' + (flashSide === s ? (dir === 'improve' ? ' flash-up' : ' flash-down') : '')}>
+            {formatPrice(mkt[s])}
+          </span>
+        </React.Fragment>
+      ))}
+    </span>
+  );
+}
+
+function Board({ round, q, conv }){
+  const legKeys = structLegs(q.structure).map(l => l.key);
+  return (
+    <div className="panel">
+      <div className="panel-title">{round.boardKind} · <span className="conv">{conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'}</span></div>
+      {round.boardKeys.map(k => {
+        const changed = q.shock.key === k;
+        const mkt = changed ? q.post[k] : q.pre[k];
+        return (
+          <div key={k} className={'row' + (legKeys.indexOf(k) >= 0 ? ' leg' : '') + (changed ? ' hot' : '')}>
+            <span className="tenor">{upK(k)}</span>
+            <Mkt mkt={mkt} conv={conv} qid={q.id}
+                 flashSide={changed ? q.shock.side : null} dir={q.shock.dir} />
+            {changed && <span className="was">was {formatPrice(q.pre[k][q.shock.side])}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ImpliedPanels({ round, q, conv }){
+  return (
+    <div className="implied-wrap">
+      {round.structures.map((st, i) => {
+        const isTarget = i === q.targetIdx;
+        const imp = isTarget ? q.oldImp : deriveImplied(st, q.pre);
+        return (
+          <div key={st.label} className={'implied' + (isTarget ? ' target' : '')}>
+            <div className="imp-head">
+              {st.label}
+              <span className="formula">{formulaCaption(st)}</span>
+              {isTarget && round.structures.length > 1 && <span className="tgt">TARGET</span>}
+            </div>
+            <Mkt mkt={imp} conv={conv} cls="imp-mkt" />
+            <div className="imp-note">implied · before the change</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Drill({ level, speed, conv, statsRef, onEnd }){
+  const [round] = useState(() => genRound(level));
+  const historyRef = useRef([]);
+  const makeQ = useCallback((board, id) => {
+    const targetIdx = level >= 4 ? ri(0, round.structures.length-1) : 0;
+    const q = genQuestion({ level, board, boardKeys: round.boardKeys,
+      structures: round.structures, targetIdx, stats: statsRef.current });
+    q.id = id;
+    q.text = shockText(q.shock, q.post);
+    return q;
+  }, [level, round, statsRef]);
+  const [q, setQ] = useState(() => makeQ(round.board, 1));
+  const [phase, setPhase] = useState('answer');           // 'answer' | 'feedback'
+  const [input, setInput] = useState('');
+  const [err, setErr] = useState(null);
+  const [fb, setFb] = useState(null);
+  const [remaining, setRemaining] = useState(SPEED_MS);
+  const t0 = useRef(0);
+  const inputRef = useRef(null);
+  window.__q = q; window.__fmt = formatPrice;            // debug/e2e hooks
+
+  useEffect(() => {                                       // question start
+    t0.current = performance.now();
+    setRemaining(SPEED_MS);
+    if (inputRef.current) inputRef.current.focus();
+  }, [q.id]);
+
+  const submit = useCallback((ans) => {                   // ans: parsed | 'timeout'
+    const ms = Math.round(performance.now() - t0.current);
+    const unchanged = q.oldImp.bid === q.newImp.bid && q.oldImp.offer === q.newImp.offer;
+    let ok = false, swap = false;
+    if (ans !== 'timeout' && ans){
+      if (ans.kind === 'unchanged') ok = unchanged;
+      else {
+        ok = ans.bid === q.newImp.bid && ans.offer === q.newImp.offer;
+        swap = !ok && ans.bid === q.newImp.offer && ans.offer === q.newImp.bid;
+      }
+    }
+    recordResult(statsRef.current, q.patternKey, ok, ms);
+    historyRef.current.push({ key: q.patternKey, ok, ms });
+    setFb({ ok, ms, swap, timeout: ans === 'timeout' });
+    setPhase('feedback');
+  }, [q, statsRef]);
+
+  const next = useCallback(() => {
+    if (q.id >= QUESTIONS_PER_ROUND){ onEnd(historyRef.current); return; }
+    setInput(''); setErr(null); setFb(null);
+    setQ(makeQ(q.post, q.id + 1));                        // board evolves
+    setPhase('answer');
+  }, [q, makeQ, onEnd]);
+
+  useEffect(() => {                                       // speed-mode countdown
+    if (!speed || phase !== 'answer') return;
+    const iv = setInterval(() => {
+      const left = SPEED_MS - (performance.now() - t0.current);
+      setRemaining(left);
+      if (left <= 0) submit('timeout');
+    }, 100);
+    return () => clearInterval(iv);
+  }, [speed, phase, q.id, submit]);
+
+  useEffect(() => {                                       // keys: N next, U unchanged, Esc end
+    const h = (e) => {
+      if (e.key === 'Escape'){ e.preventDefault(); onEnd(historyRef.current); return; }
+      if (phase === 'feedback' && (e.key === 'n' || e.key === 'N' || e.key === 'Enter')){
+        e.preventDefault(); next(); return;
+      }
+      if (phase === 'answer' && (e.key === 'u' || e.key === 'U') &&
+          (!inputRef.current || inputRef.current.value.trim() === '')){
+        e.preventDefault(); submit({ kind:'unchanged' });
+      }
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [phase, next, submit, onEnd]);
+
+  const onSubmit = (e) => {
+    e.preventDefault();
+    const ans = parseAnswer(input, conv, q.oldImp);
+    if (!ans){ setErr('could not read that — e.g. "51 4/8 / 50 5/8", "51.5/50.625" or fractions "4/5"'); return; }
+    submit(ans);
+  };
+
+  const streak = (() => { let s = 0; const h = historyRef.current;
+    for (let i = h.length-1; i >= 0 && h[i].ok; i--) s++; return s; })();
+  const first = conv === 'ob' ? 'offer' : 'bid';
+  const second = conv === 'ob' ? 'bid' : 'offer';
+  const handles = Math.floor(Math.abs(q.oldImp[first])/16) + ' / ' + Math.floor(Math.abs(q.oldImp[second])/16);
+  const unchanged = q.oldImp.bid === q.newImp.bid && q.oldImp.offer === q.newImp.offer;
+
+  return (
+    <div>
+      <div className="hud">
+        <span>LVL <b>{level}</b></span>
+        <span>Q <b>{q.id}/{QUESTIONS_PER_ROUND}</b></span>
+        <span>STREAK <b>{streak}</b></span>
+        <span>TARGET <b>{q.structure.label}</b></span>
+        <span style={{marginLeft:'auto'}}>ESC — end session</span>
+      </div>
+      <Board round={round} q={q} conv={conv} />
+      <ImpliedPanels round={round} q={q} conv={conv} />
+      <div className="shock">
+        <span className="shock-label">CHANGE</span>
+        <span className="shock-text">{q.text}</span>
+        {speed && phase === 'answer' && <span className="clock">{Math.max(0, remaining/1000).toFixed(1)}s</span>}
+      </div>
+      {phase === 'answer' ? (
+        <form className="ansform" onSubmit={onSubmit}>
+          <input ref={inputRef} value={input} autoFocus autoComplete="off" spellCheck="false"
+                 onChange={e => { setInput(e.target.value); setErr(null); }}
+                 placeholder={'new implied ' + (conv === 'ob' ? 'offer / bid' : 'bid / offer')} />
+          <div className="hint">handles {handles} · type "{conv === 'ob' ? 'offer / bid' : 'bid / offer'}" · fractions only is fine ("4/5") · Enter submit · U unchanged</div>
+          {err && <div className="err">{err}</div>}
+        </form>
+      ) : (
+        <div className={'fb ' + (fb.ok ? 'ok' : 'bad')}>
+          <div className="fb-line1">
+            <span className="verdict">{fb.ok ? 'CORRECT' : (fb.timeout ? 'TIME OUT' : 'WRONG')}</span>
+            <span className="ms">{(fb.ms/1000).toFixed(2)}s</span>
+            <span className="stk">streak {streak}</span>
+          </div>
+          <div className="fb-ans">
+            {unchanged ? 'UNCHANGED — ' : ''}
+            <Mkt mkt={q.newImp} conv={conv} cls="mkt" />
+          </div>
+          {fb.swap && <div className="fb-swap">right numbers, wrong order — quotes here are {conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'}</div>}
+          <div className="fb-deriv">{derivation(q)}</div>
+          <div className="fb-next">N — next</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HeatMap({ stats }){
+  const rows = HEAT_ROWS.filter(r =>
+    HEAT_COLS.some(c => { const s = stats[patKey(r.t, r.role, c.side, c.dir)]; return s && s.n > 0; }));
+  if (!rows.length) return null;
+  return (
+    <div className="panel">
+      <div className="panel-title">PATTERN ACCURACY · cell text: % correct · median seconds</div>
+      <table className="heat">
+        <thead>
+          <tr><th className="rowlab"></th>{HEAT_COLS.map(c => <th key={c.label}>{c.label}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.t + r.role}>
+              <td className="rowlab">{r.label}</td>
+              {HEAT_COLS.map(c => {
+                const s = stats[patKey(r.t, r.role, c.side, c.dir)];
+                if (!s || !s.n) return <td key={c.label} className="cell empty">—</td>;
+                const acc = s.ok/s.n, col = heatColor(acc), med = median(s.times);
+                return (
+                  <td key={c.label} className="cell" style={{ background: col.bg, color: col.ink }}
+                      title={r.label + ' · ' + c.label.toLowerCase() + ': ' + s.ok + '/' + s.n + ' correct, median ' + (med/1000).toFixed(1) + 's'}>
+                    <div className="a">{Math.round(acc*100)}%</div>
+                    <div className="m">{s.ok}/{s.n} · {(med/1000).toFixed(1)}s</div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="legend">
+        weak
+        <span className="sw" style={{background:'var(--heat-w3)'}}></span>
+        <span className="sw" style={{background:'var(--heat-w2)'}}></span>
+        <span className="sw" style={{background:'var(--heat-w1)'}}></span>
+        <span className="sw" style={{background:'var(--heat-mid)'}}></span>
+        <span className="sw" style={{background:'var(--heat-s1)'}}></span>
+        <span className="sw" style={{background:'var(--heat-s2)'}}></span>
+        <span className="sw" style={{background:'var(--heat-s3)'}}></span>
+        strong · neutral band 70–80% · weak patterns come back sooner
+      </div>
+    </div>
+  );
+}
+
+function Summary({ history, stats, onRestart, onMenu }){
+  useEffect(() => {
+    const h = (e) => {
+      if (e.key === 'r' || e.key === 'R' || e.key === 'Enter'){ e.preventDefault(); onRestart(); }
+      if (e.key === 'l' || e.key === 'L' || e.key === 'Escape'){ e.preventDefault(); onMenu(); }
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [onRestart, onMenu]);
+  const n = history.length, okN = history.filter(x => x.ok).length;
+  let best = 0, cur = 0;
+  history.forEach(x => { cur = x.ok ? cur+1 : 0; if (cur > best) best = cur; });
+  const okTimes = history.filter(x => x.ok).map(x => x.ms);
+  const fastest = okTimes.length ? Math.min.apply(null, okTimes) : null;
+  const med = okTimes.length ? median(okTimes) : null;
+  return (
+    <div>
+      <div className="tiles">
+        <div className="tile"><div className="v">{okN}/{n}</div><div className="l">CORRECT</div></div>
+        <div className="tile"><div className="v">{best}</div><div className="l">BEST STREAK</div></div>
+        <div className="tile"><div className="v">{fastest != null ? (fastest/1000).toFixed(2)+'s' : '—'}</div><div className="l">BEST TIME</div></div>
+        <div className="tile"><div className="v">{med != null ? (med/1000).toFixed(2)+'s' : '—'}</div><div className="l">MEDIAN (OK)</div></div>
+      </div>
+      <HeatMap stats={stats} />
+      <div className="keysbar"><b>R</b> — run it again · <b>L</b> — level select</div>
+    </div>
+  );
+}
+
+function Menu({ speed, conv, onStart, onToggleSpeed, onToggleConv, testResult }){
+  useEffect(() => {
+    const h = (e) => {
+      if (e.key >= '1' && e.key <= '4'){ e.preventDefault(); onStart(+e.key); }
+      if (e.key === 's' || e.key === 'S'){ e.preventDefault(); onToggleSpeed(); }
+      if (e.key === 'o' || e.key === 'O'){ e.preventDefault(); onToggleConv(); }
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [onStart, onToggleSpeed, onToggleConv]);
+  return (
+    <div className="menu">
+      {testResult.failed.length > 0 &&
+        <div className="testfail">{'SELF-TESTS FAILED (' + testResult.failed.length + '/' + testResult.count + ')\n' + testResult.failed.join('\n')}</div>}
+      <div className="panel">
+        <div className="panel-title">ONE PRICE MOVES — RE-QUOTE THE IMPLIED. PICK A LEVEL:</div>
+        {LEVELS.map(l => (
+          <div key={l.n} className="lvl" style={{cursor:'pointer'}} onClick={() => onStart(l.n)}>
+            <span className="num">{l.n}</span><span className="nm">{l.nm}</span><span className="ds">{l.ds}</span>
+          </div>
+        ))}
+        <div className="opt"><b>S</b> speed mode: {speed ? 'ON — 10s per question' : 'off'} · <b>O</b> quotes: {conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'}</div>
+        <div className="opt">offer = pay side (higher) · bid = receive side (lower) · improve = tighter (bid up / offer down)</div>
+        <div className="opt">answer like "51 4/8 / 50 5/8" or "51.5/50.625" or just fractions "4/5" · U = unchanged · all prices tick in 1/8 bp</div>
+      </div>
+    </div>
+  );
+}
+
+function App(){
+  const [phase, setPhase] = useState('menu');
+  const [level, setLevel] = useState(1);
+  const [speed, setSpeed] = useState(false);
+  const [conv, setConv] = useState('ob');                  // offer/bid, per desk convention
+  const [roundId, setRoundId] = useState(1);
+  const [lastHistory, setLastHistory] = useState([]);
+  const statsRef = useRef({});                             // session-only, no persistence
+  const [testResult] = useState(() => {
+    const r = runTests();
+    if (r.failed.length) console.error('SHIFT self-tests failed:', r.failed);
+    window.__TESTS = r;
+    return r;
+  });
+  return (
+    <div className="app">
+      <div className="hdr">
+        <h1>SHIFT</h1>
+        <span className="sub">implied price shift trainer · {conv === 'ob' ? 'offer/bid' : 'bid/offer'} · 1/8 ticks</span>
+      </div>
+      {phase === 'menu' &&
+        <Menu speed={speed} conv={conv} testResult={testResult}
+              onStart={l => { setLevel(l); setRoundId(r => r+1); setPhase('drill'); }}
+              onToggleSpeed={() => setSpeed(s => !s)}
+              onToggleConv={() => setConv(c => c === 'ob' ? 'bo' : 'ob')} />}
+      {phase === 'drill' &&
+        <Drill key={roundId} level={level} speed={speed} conv={conv} statsRef={statsRef}
+               onEnd={h => { setLastHistory(h); setPhase('summary'); }} />}
+      {phase === 'summary' &&
+        <Summary history={lastHistory} stats={statsRef.current}
+                 onRestart={() => { setRoundId(r => r+1); setPhase('drill'); }}
+                 onMenu={() => setPhase('menu')} />}
+    </div>
+  );
+}
+
+window.__APP_MOUNTED = true;
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+<script>
+window.addEventListener('load', function(){
+  setTimeout(function(){
+    if (!window.__APP_MOUNTED)
+      document.getElementById('root').innerHTML =
+        '<div class="loadfail">Could not load React/Babel from the CDN — check your connection and reload.</div>';
+  }, 1500);
+});
+</script>
+</body>
+</html>

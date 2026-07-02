@@ -276,7 +276,7 @@ function pickTriple(){
   return idx.map(function(i){ return TENORS[i].k; });
 }
 function genRound(level){
-  if (level === 3){
+  if (level === 4){
     const board = genSpreadBoard();
     const i = ri(0, SPREAD_KEYS.length-2);
     const st = { type:'chain', leg1: SPREAD_KEYS[i], leg2: SPREAD_KEYS[i+1],
@@ -285,11 +285,11 @@ function genRound(level){
   }
   const board = genOutrights();
   const keys = TENORS.map(function(t){ return t.k; });
-  if (level === 1){
+  if (level === 2){
     const p = pickPair();
     return { board: board, boardKeys: keys, structures: [mkSpread(p[0], p[1])], boardKind: 'OUTRIGHTS' };
   }
-  if (level === 2){
+  if (level === 3){
     const t = pickTriple();
     return { board: board, boardKeys: keys, structures: [mkFly(t[0], t[1], t[2])], boardKind: 'OUTRIGHTS' };
   }
@@ -343,7 +343,7 @@ function genQuestion(opts){
   const st = opts.structures[opts.targetIdx];
   const legs = structLegs(st);
   const legKeys = legs.map(function(l){ return l.key; });
-  const wantDist = opts.level >= 4 && Math.random() < 0.25;
+  const wantDist = opts.level >= 5 && Math.random() < 0.25;
   let cands = [];
   function addCands(keyRoles){
     keyRoles.forEach(function(kr){
@@ -419,6 +419,101 @@ function derivation(q){
     : '';
   return upK(shock.key) + ' ' + shock.side + ' feeds the implied ' + movedSide + ': ' + formula +
     '. ' + otherSide.charAt(0).toUpperCase() + otherSide.slice(1) + ' side untouched.' + twice;
+}
+
+// ---- triangle mode: outright + spread, one-sided prices (far = near + spread) ----
+// Two one-sided prices imply the third instrument; when a real price then
+// prints on that third, it reprices the other two 1:1 — the broker's basic
+// pass-through: "a bid in one thing is a bid in everything".
+function oppSide(s){ return s === 'bid' ? 'offer' : 'bid'; }
+var TRI_RULES = {
+  far:    { bid:   { from:[['near','bid'],  ['spread','bid']],   sign: 1 },
+            offer: { from:[['near','offer'],['spread','offer']], sign: 1 } },
+  near:   { bid:   { from:[['far','bid'],  ['spread','offer']],  sign:-1 },
+            offer: { from:[['far','offer'],['spread','bid']],    sign:-1 } },
+  spread: { bid:   { from:[['far','bid'],  ['near','offer']],    sign:-1 },
+            offer: { from:[['far','offer'],['near','bid']],      sign:-1 } }
+};
+// prices: partial one-sided map {near:{offer:px}, far:{}, spread:{offer:px}}
+function triImplied(inst, side, prices){
+  const r = TRI_RULES[inst][side];
+  const a = prices[r.from[0][0]][r.from[0][1]];
+  const b = prices[r.from[1][0]][r.from[1][1]];
+  return r.sign === 1 ? a + b : a - b;
+}
+function formatDelta(s16){
+  const whole = Math.floor(s16/16), rem = s16 % 16;
+  const fr = {2:'1/8',4:'1/4',6:'3/8',8:'1/2',10:'5/8',12:'3/4',14:'7/8'}[rem];
+  if (!rem) return String(whole);
+  return whole ? whole + ' ' + fr : fr;
+}
+function parseTwoLoose(text){
+  const parts = splitAnswer(text);
+  if (!parts) return null;
+  const p1 = parsePrice(parts[0], null), p2 = parsePrice(parts[1], null);
+  return (p1 === null || p2 === null) ? null : [p1, p2];
+}
+var TRI_DELTAS = [2, 4, 6, 8, 12, 16];             // 1/8 1/4 3/8 1/2 3/4 1 bp
+function triNum(k){ return k.replace('y',''); }
+function triLabel(scen, inst){
+  if (inst === 'near') return upK(scen.nearK);
+  if (inst === 'far') return upK(scen.farK);
+  return triNum(scen.nearK) + 'x' + triNum(scen.farK);
+}
+function genTriScenario(){
+  const i = ri(0, TENORS.length-2), j = ri(i+1, TENORS.length-1);
+  // mix of whole-bp, half-bp and eighth-bp prints
+  function grid(){ const r = Math.random(); return r < 0.4 ? 16 : r < 0.7 ? 8 : 2; }
+  const g1 = grid(), g2 = grid();
+  const nearLvl = Math.round((TENORS[i].mid + Math.random()*10 - 5)*16/g1)*g1;
+  let sprLvl = Math.round(((TENORS[j].mid - TENORS[i].mid) + Math.random()*6 - 3)*16/g2)*g2;
+  if (sprLvl < 16) sprLvl = 16;
+  const levels = { near: nearLvl, far: nearLvl + sprLvl, spread: sprLvl };
+  const incomingInst = pick(['far','near','spread']);
+  const incomingSide = pick(['bid','offer']);
+  const delta = pick(TRI_DELTAS);
+  const askSide = oppSide(incomingSide);           // phase A: implied on this side
+  const rule = TRI_RULES[incomingInst][askSide];   // its inputs are the two givens
+  const prices = { near:{}, far:{}, spread:{} };
+  rule.from.forEach(function(f){ prices[f[0]][f[1]] = levels[f[0]]; });
+  const impliedA = triImplied(incomingInst, askSide, prices);
+  const incomingPx = incomingSide === 'bid' ? impliedA - delta : impliedA + delta;
+  const prices2 = { near: Object.assign({}, prices.near),
+                    far: Object.assign({}, prices.far),
+                    spread: Object.assign({}, prices.spread) };
+  prices2[incomingInst][incomingSide] = incomingPx;
+  const order = { near:0, far:1, spread:2 };
+  const given = rule.from.map(function(f){ return { inst:f[0], side:f[1], px:levels[f[0]] }; })
+    .sort(function(x,y){ return order[x.inst] - order[y.inst]; });
+  const answers = given.map(function(g){
+    const s = oppSide(g.side);                     // the incoming reprices each given's other side
+    return { inst:g.inst, side:s, px: triImplied(g.inst, s, prices2) };
+  });
+  return { nearK: TENORS[i].k, farK: TENORS[j].k, levels: levels, given: given,
+           incomingInst: incomingInst, incomingSide: incomingSide,
+           incomingPx: incomingPx, delta: delta,
+           impliedA: { inst: incomingInst, side: askSide, px: impliedA },
+           answers: answers, prices2: prices2 };
+}
+function triPatternKey(scen){
+  return patKey('tri', scen.incomingInst, scen.incomingSide, scen.delta <= 6 ? 'small' : 'large');
+}
+function triDerivLines(scen){
+  const F = formatPrice;
+  const lines = scen.answers.map(function(a){
+    const r = TRI_RULES[a.inst][a.side];
+    const v0 = scen.prices2[r.from[0][0]][r.from[0][1]];
+    const v1 = scen.prices2[r.from[1][0]][r.from[1][1]];
+    const op = r.sign === 1 ? ' + ' : ' − ';
+    return triLabel(scen, a.inst) + ' ' + a.side + ' = ' +
+      triLabel(scen, r.from[0][0]) + ' ' + r.from[0][1] + op +
+      triLabel(scen, r.from[1][0]) + ' ' + r.from[1][1] + ': ' +
+      F(v0) + op + F(v1) + ' = ' + F(a.px);
+  });
+  lines.push(triLabel(scen, scen.incomingInst) + ' came ' + formatDelta(scen.delta) +
+    (scen.incomingSide === 'bid' ? ' under' : ' over') + ' your implied ' + scen.impliedA.side +
+    ' — that ' + formatDelta(scen.delta) + ' passes 1:1 into both implieds.');
+  return lines;
 }
 
 // ==PURE-END==
@@ -507,6 +602,44 @@ function runTests(){
   eq('shock text', shockText(shock, B2), '5Y offer improves 1/8 → 45 5/8');
   // legal sizes never cross the market
   eq('legalSizes tight market', legalSizes({bid:724,offer:728}, 'offer', 'improve'), [2]);
+
+  // TRIANGLE — user's worked example: 1Y offer 110 + 1x2 offer 5 → implied 2Y
+  // offer 115; a 114 bid prints in 2Y → 1Y bid 109, 1x2 bid 4 (Δ1 passes 1:1)
+  eq('tri build: far offer', triImplied('far','offer',{near:{offer:1760},far:{},spread:{offer:80}}), 1840);
+  const TPB = { near:{offer:1760}, far:{bid:1824}, spread:{offer:80} };
+  eq('tri cascade: near bid 109', triImplied('near','bid',TPB), 1744);
+  eq('tri cascade: spread bid 4', triImplied('spread','bid',TPB), 64);
+  // eighths: 5Y offer 46 2/8 + 5x10 offer 25 2/8 → 10Y offer 71 4/8;
+  // 10Y bid comes 71 3/8 (1/8 under) → 5Y bid 46 1/8, 5x10 bid 25 1/8
+  eq('tri build eighths', triImplied('far','offer',{near:{offer:740},far:{},spread:{offer:404}}), 1144);
+  const TPC = { near:{offer:740}, far:{bid:1142}, spread:{offer:404} };
+  eq('tri eighths: near bid', triImplied('near','bid',TPC), 738);
+  eq('tri eighths: spread bid', triImplied('spread','bid',TPC), 402);
+  // mixed sides: incoming near bid against given far offer & spread bid
+  const TPD = { near:{bid:1744}, far:{offer:1840}, spread:{bid:80} };
+  eq('tri mixed: far bid', triImplied('far','bid',TPD), 1824);
+  eq('tri mixed: spread offer', triImplied('spread','offer',TPD), 96);
+  eq('delta 1/8', formatDelta(2), '1/8');
+  eq('delta 1/4', formatDelta(4), '1/4');
+  eq('delta 1/2', formatDelta(8), '1/2');
+  eq('delta 1', formatDelta(16), '1');
+  eq('delta 1 1/2', formatDelta(24), '1 1/2');
+  eq('parseTwoLoose fractions', parseTwoLoose('109 4/8 / 4 4/8'), [1752, 72]);
+  eq('parseTwoLoose whole bp', parseTwoLoose('109/4'), [1744, 64]);
+  eq('parseTwoLoose decimals', parseTwoLoose('109.5/4.5'), [1752, 72]);
+  // generator invariant: every phase-B answer sits exactly Δ off its level,
+  // toward the incoming price — bids Δ under, offers Δ over
+  let triBad = 0;
+  for (let t = 0; t < 200; t++){
+    const sc = genTriScenario();
+    if (sc.answers.length !== 2) triBad++;
+    if (triImplied(sc.impliedA.inst, sc.impliedA.side, sc.prices2) !== sc.impliedA.px) triBad++;
+    sc.answers.forEach(function(a){
+      if (a.px !== sc.levels[a.inst] + (a.side === 'offer' ? sc.delta : -sc.delta)) triBad++;
+      if (a.px <= 0 || a.px % 2 !== 0) triBad++;
+    });
+  }
+  eq('tri scenarios ×200: 1:1 pass-through holds', triBad, 0);
   return { count: count, failed: failed };
 }
 // ==TESTS-END==
@@ -519,10 +652,11 @@ const { useState, useEffect, useRef, useCallback } = React;
 const QUESTIONS_PER_ROUND = 20;
 const SPEED_MS = 10000;
 const LEVELS = [
-  { n:1, nm:'SPREADS', ds:'one target spread off the outright board' },
-  { n:2, nm:'FLIES',   ds:'belly moves are 2× — the classic trap' },
-  { n:3, nm:'CHAINS',  ds:'implied spread chained from two spread markets' },
-  { n:4, nm:'MIXED',   ds:'targets rotate, ~25% distractors — press U when your implied is untouched' },
+  { n:1, nm:'TRIANGLE', ds:'outright + spread: build the implied, then a price prints Δ through it — re-quote the other two' },
+  { n:2, nm:'SPREADS', ds:'one target spread off the two-way outright board' },
+  { n:3, nm:'FLIES',   ds:'belly moves are 2× — the classic trap' },
+  { n:4, nm:'CHAINS',  ds:'implied spread chained from two spread markets' },
+  { n:5, nm:'MIXED',   ds:'targets rotate, ~25% distractors — press U when your implied is untouched' },
 ];
 const HEAT_ROWS = [
   { t:'spread', role:'near',     label:'spread · near leg' },
@@ -617,7 +751,7 @@ function Drill({ level, speed, conv, statsRef, onEnd }){
   const [round] = useState(() => genRound(level));
   const historyRef = useRef([]);
   const makeQ = useCallback((board, id) => {
-    const targetIdx = level >= 4 ? ri(0, round.structures.length-1) : 0;
+    const targetIdx = level >= 5 ? ri(0, round.structures.length-1) : 0;
     const q = genQuestion({ level, board, boardKeys: round.boardKeys,
       structures: round.structures, targetIdx, stats: statsRef.current });
     q.id = id;
@@ -747,37 +881,215 @@ function Drill({ level, speed, conv, statsRef, onEnd }){
   );
 }
 
+function TriangleDrill({ speed, statsRef, onEnd }){
+  const historyRef = useRef([]);
+  const [scen, setScen] = useState(() => { const s = genTriScenario(); s.id = 1; return s; });
+  const [stage, setStage] = useState('A');                // 'A' build | 'B' cascade | 'feedback'
+  const [input, setInput] = useState('');
+  const [err, setErr] = useState(null);
+  const [resA, setResA] = useState(null);
+  const [fb, setFb] = useState(null);
+  const [remaining, setRemaining] = useState(SPEED_MS);
+  const tStage = useRef(0), tAll = useRef(0);
+  const inputRef = useRef(null);
+  window.__tri = scen; window.__fmt = formatPrice;        // debug/e2e hooks
+
+  useEffect(() => {
+    tStage.current = performance.now();
+    if (stage === 'A') tAll.current = tStage.current;
+    setRemaining(SPEED_MS);
+    if (inputRef.current) inputRef.current.focus();
+  }, [scen.id, stage]);
+
+  const conclude = (okB, timeout) => {
+    const ms = Math.round(performance.now() - tAll.current);
+    const ok = !!(resA && resA.ok) && okB;
+    recordResult(statsRef.current, triPatternKey(scen), ok, ms);
+    historyRef.current.push({ key: triPatternKey(scen), ok, ms });
+    setFb({ ok, okB, ms, timeout });
+    setStage('feedback');
+  };
+  const submit = (e) => {
+    e.preventDefault();
+    if (stage === 'A'){
+      const v = parsePrice(input.trim(), null);
+      if (v === null){ setErr('one price — "115", "115 0/8" or "114.875"'); return; }
+      setResA({ ok: v === scen.impliedA.px, val: v });
+      setInput(''); setErr(null); setStage('B');
+    } else {
+      const v = parseTwoLoose(input);
+      if (!v){ setErr('two prices, "/"-separated — e.g. "109 4/8 / 4 4/8" (bare numbers are whole bp)'); return; }
+      conclude(v[0] === scen.answers[0].px && v[1] === scen.answers[1].px, false);
+    }
+  };
+  const next = () => {
+    if (scen.id >= QUESTIONS_PER_ROUND){ onEnd(historyRef.current); return; }
+    const s = genTriScenario(); s.id = scen.id + 1;
+    setScen(s); setResA(null); setFb(null); setInput(''); setErr(null); setStage('A');
+  };
+
+  useEffect(() => {                                       // speed-mode countdown per stage
+    if (!speed || stage === 'feedback') return;
+    const iv = setInterval(() => {
+      const left = SPEED_MS - (performance.now() - tStage.current);
+      setRemaining(left);
+      if (left <= 0){
+        if (stage === 'A'){ setResA({ ok:false, timeout:true }); setInput(''); setStage('B'); }
+        else conclude(false, true);
+      }
+    }, 100);
+    return () => clearInterval(iv);
+  }, [speed, stage, scen.id]);
+
+  useEffect(() => {
+    const h = (e) => {
+      if (e.key === 'Escape'){ e.preventDefault(); onEnd(historyRef.current); return; }
+      if (stage === 'feedback' && (e.key === 'n' || e.key === 'N' || e.key === 'Enter')){
+        e.preventDefault(); next();
+      }
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [stage, scen.id]);
+
+  const L = (inst) => triLabel(scen, inst);
+  const streak = (() => { let s = 0; const h = historyRef.current;
+    for (let i = h.length-1; i >= 0 && h[i].ok; i--) s++; return s; })();
+  const a0 = scen.answers[0], a1 = scen.answers[1];
+
+  return (
+    <div>
+      <div className="hud">
+        <span>LVL <b>1</b></span>
+        <span>Q <b>{scen.id}/{QUESTIONS_PER_ROUND}</b></span>
+        <span>STREAK <b>{streak}</b></span>
+        <span>TRIANGLE <b>{L('near')} · {L('far')} · {L('spread')}</b></span>
+        <span style={{marginLeft:'auto'}}>ESC — end session</span>
+      </div>
+      <div className="panel">
+        <div className="panel-title">GIVEN · ONE-SIDED PRICES</div>
+        {scen.given.map(g => (
+          <div key={g.inst} className="row leg">
+            <span className="tenor">{L(g.inst)}</span>
+            <span className="mkt">{formatPrice(g.px)}</span>
+            <span className="was">{g.side}</span>
+          </div>
+        ))}
+        {stage !== 'A' && (
+          <div className="row hot" key={'in'+scen.id}>
+            <span className="tenor">{L(scen.incomingInst)}</span>
+            <span className="mkt">
+              <span className={'px ' + (scen.incomingSide === 'bid' ? 'flash-up' : 'flash-down')}>
+                {formatPrice(scen.incomingPx)}
+              </span>
+            </span>
+            <span className="was">{scen.incomingSide} · just in</span>
+          </div>
+        )}
+      </div>
+      {resA && (
+        <div className="panel" style={{padding:'.45rem .9rem'}}>
+          <span className="hint">
+            your implied {L(scen.impliedA.inst)} {scen.impliedA.side}: {formatPrice(scen.impliedA.px)}{' '}
+            {resA.ok ? '✓' : resA.timeout ? '— time ran out' : '✗ (you had ' + formatPrice(resA.val) + ')'}
+          </span>
+        </div>
+      )}
+      <div className="shock">
+        <span className="shock-label">{stage === 'A' ? 'BUILD' : 'CHANGE'}</span>
+        <span className="shock-text">
+          {stage === 'A'
+            ? 'quote the implied ' + L(scen.impliedA.inst) + ' ' + scen.impliedA.side
+            : L(scen.incomingInst) + ' ' + scen.incomingSide + ' comes ' + formatPrice(scen.incomingPx) + ' — re-quote the other two'}
+        </span>
+        {speed && stage !== 'feedback' && <span className="clock">{Math.max(0, remaining/1000).toFixed(1)}s</span>}
+      </div>
+      {stage !== 'feedback' ? (
+        <form className="ansform" onSubmit={submit}>
+          <input ref={inputRef} value={input} autoFocus autoComplete="off" spellCheck="false"
+                 onChange={e => { setInput(e.target.value); setErr(null); }}
+                 placeholder={stage === 'A'
+                   ? 'implied ' + L(scen.impliedA.inst) + ' ' + scen.impliedA.side
+                   : L(a0.inst) + ' ' + a0.side + ' / ' + L(a1.inst) + ' ' + a1.side} />
+          <div className="hint">{stage === 'A'
+            ? 'one price · "115", "115 0/8", "114.875" · Enter submit'
+            : 'two prices in that order, "/"-separated · bare numbers are whole bp · Enter submit'}</div>
+          {err && <div className="err">{err}</div>}
+        </form>
+      ) : (
+        <div className={'fb ' + (fb.ok ? 'ok' : 'bad')}>
+          <div className="fb-line1">
+            <span className="verdict">{fb.ok ? 'CORRECT' : fb.timeout ? 'TIME OUT' : 'WRONG'}</span>
+            <span className="ms">{(fb.ms/1000).toFixed(2)}s total</span>
+            <span className="stk">streak {streak}</span>
+          </div>
+          <div className="fb-ans">
+            {L(a0.inst)} {a0.side} {formatPrice(a0.px)}
+            <span className="slash"> · </span>
+            {L(a1.inst)} {a1.side} {formatPrice(a1.px)}
+          </div>
+          {triDerivLines(scen).map((ln, i) => <div key={i} className="fb-deriv">{ln}</div>)}
+          <div className="fb-next">N — next</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TRI_ROWS = [
+  { role:'far',    label:'triangle · price in the far leg' },
+  { role:'near',   label:'triangle · price in the near leg' },
+  { role:'spread', label:'triangle · price in the spread' },
+];
+const TRI_COLS = [
+  { side:'bid',   d:'small', label:'BID · Δ≤3/8' },
+  { side:'bid',   d:'large', label:'BID · Δ≥1/2' },
+  { side:'offer', d:'small', label:'OFFER · Δ≤3/8' },
+  { side:'offer', d:'large', label:'OFFER · Δ≥1/2' },
+];
+
+function HeatCell({ s, title }){
+  if (!s || !s.n) return <td className="cell empty">—</td>;
+  const acc = s.ok/s.n, col = heatColor(acc), med = median(s.times);
+  return (
+    <td className="cell" style={{ background: col.bg, color: col.ink }}
+        title={title + ': ' + s.ok + '/' + s.n + ' correct, median ' + (med/1000).toFixed(1) + 's'}>
+      <div className="a">{Math.round(acc*100)}%</div>
+      <div className="m">{s.ok}/{s.n} · {(med/1000).toFixed(1)}s</div>
+    </td>
+  );
+}
+
+function HeatTable({ rows, cols, stats, keyOf }){
+  const live = rows.filter(r => cols.some(c => { const s = stats[keyOf(r, c)]; return s && s.n > 0; }));
+  if (!live.length) return null;
+  return (
+    <table className="heat">
+      <thead>
+        <tr><th className="rowlab"></th>{cols.map(c => <th key={c.label}>{c.label}</th>)}</tr>
+      </thead>
+      <tbody>
+        {live.map(r => (
+          <tr key={r.label}>
+            <td className="rowlab">{r.label}</td>
+            {cols.map(c => <HeatCell key={c.label} s={stats[keyOf(r, c)]} title={r.label + ' · ' + c.label.toLowerCase()} />)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function HeatMap({ stats }){
-  const rows = HEAT_ROWS.filter(r =>
-    HEAT_COLS.some(c => { const s = stats[patKey(r.t, r.role, c.side, c.dir)]; return s && s.n > 0; }));
-  if (!rows.length) return null;
+  const any = Object.keys(stats).some(k => stats[k].n > 0);
+  if (!any) return null;
   return (
     <div className="panel">
       <div className="panel-title">PATTERN ACCURACY · cell text: % correct · median seconds</div>
-      <table className="heat">
-        <thead>
-          <tr><th className="rowlab"></th>{HEAT_COLS.map(c => <th key={c.label}>{c.label}</th>)}</tr>
-        </thead>
-        <tbody>
-          {rows.map(r => (
-            <tr key={r.t + r.role}>
-              <td className="rowlab">{r.label}</td>
-              {HEAT_COLS.map(c => {
-                const s = stats[patKey(r.t, r.role, c.side, c.dir)];
-                if (!s || !s.n) return <td key={c.label} className="cell empty">—</td>;
-                const acc = s.ok/s.n, col = heatColor(acc), med = median(s.times);
-                return (
-                  <td key={c.label} className="cell" style={{ background: col.bg, color: col.ink }}
-                      title={r.label + ' · ' + c.label.toLowerCase() + ': ' + s.ok + '/' + s.n + ' correct, median ' + (med/1000).toFixed(1) + 's'}>
-                    <div className="a">{Math.round(acc*100)}%</div>
-                    <div className="m">{s.ok}/{s.n} · {(med/1000).toFixed(1)}s</div>
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <HeatTable rows={TRI_ROWS} cols={TRI_COLS} stats={stats}
+                 keyOf={(r, c) => patKey('tri', r.role, c.side, c.d)} />
+      <HeatTable rows={HEAT_ROWS} cols={HEAT_COLS} stats={stats}
+                 keyOf={(r, c) => patKey(r.t, r.role, c.side, c.dir)} />
       <div className="legend">
         weak
         <span className="sw" style={{background:'var(--heat-w3)'}}></span>
@@ -825,7 +1137,7 @@ function Summary({ history, stats, onRestart, onMenu }){
 function Menu({ speed, conv, onStart, onToggleSpeed, onToggleConv, testResult }){
   useEffect(() => {
     const h = (e) => {
-      if (e.key >= '1' && e.key <= '4'){ e.preventDefault(); onStart(+e.key); }
+      if (e.key >= '1' && e.key <= '5'){ e.preventDefault(); onStart(+e.key); }
       if (e.key === 's' || e.key === 'S'){ e.preventDefault(); onToggleSpeed(); }
       if (e.key === 'o' || e.key === 'O'){ e.preventDefault(); onToggleConv(); }
     };
@@ -845,6 +1157,7 @@ function Menu({ speed, conv, onStart, onToggleSpeed, onToggleConv, testResult })
         ))}
         <div className="opt"><b>S</b> speed mode: {speed ? 'ON — 10s per question' : 'off'} · <b>O</b> quotes: {conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'}</div>
         <div className="opt">offer = pay side (higher) · bid = receive side (lower) · improve = tighter (bid up / offer down)</div>
+        <div className="opt">triangle: 1Y offer 110 + 1x2 offer 5 → implied 2Y offer 115; a 114 bid prints → 1Y bid 109, 1x2 bid 4 — the Δ passes 1:1</div>
         <div className="opt">answer like "51 4/8 / 50 5/8" or "51.5/50.625" or just fractions "4/5" · U = unchanged · all prices tick in 1/8 bp</div>
       </div>
     </div>
@@ -876,9 +1189,11 @@ function App(){
               onStart={l => { setLevel(l); setRoundId(r => r+1); setPhase('drill'); }}
               onToggleSpeed={() => setSpeed(s => !s)}
               onToggleConv={() => setConv(c => c === 'ob' ? 'bo' : 'ob')} />}
-      {phase === 'drill' &&
-        <Drill key={roundId} level={level} speed={speed} conv={conv} statsRef={statsRef}
-               onEnd={h => { setLastHistory(h); setPhase('summary'); }} />}
+      {phase === 'drill' && (level === 1
+        ? <TriangleDrill key={roundId} speed={speed} statsRef={statsRef}
+                         onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
+        : <Drill key={roundId} level={level} speed={speed} conv={conv} statsRef={statsRef}
+                 onEnd={h => { setLastHistory(h); setPhase('summary'); }} />)}
       {phase === 'summary' &&
         <Summary history={lastHistory} stats={statsRef.current}
                  onRestart={() => { setRoundId(r => r+1); setPhase('drill'); }}

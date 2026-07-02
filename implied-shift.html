@@ -137,10 +137,11 @@ function fromDecimal(dec){
 function formatPrice(s16){
   const neg = s16 < 0, a = Math.abs(s16);
   const whole = Math.floor(a/16), rem = a%16;
-  const frac = rem%2===0 ? (rem/2)+'/8' : rem+'/16';
-  return (neg?'-':'') + whole + ' ' + frac;
+  if (!rem) return (neg?'-':'') + whole;
+  let num = rem, den = 16;
+  while (num % 2 === 0){ num /= 2; den /= 2; }     // 8/16 → 1/2, 4/16 → 1/4, 10/16 → 5/8
+  return (neg?'-':'') + whole + ' ' + num + '/' + den;
 }
-function formatSize(s16){ return (s16/2) + '/8'; }
 
 // ---- markets & structures ----
 // market: {bid, offer} in 16ths, bid < offer. bid = receive side, offer = pay side.
@@ -179,18 +180,25 @@ function applyShock(board, shock){
 function parsePrice(tok, prevS16){
   tok = tok.trim();
   let m;
-  if ((m = tok.match(/^(-?)(\d+)\s+([0-7])\/8$/)))
-    return (m[1]?-1:1) * ((+m[2])*16 + (+m[3])*2);
-  if ((m = tok.match(/^(-?)(\d+)\s+(\d{1,2})\/16$/))){
-    if (+m[3] > 15) return null;
-    return (m[1]?-1:1) * ((+m[2])*16 + (+m[3]));
+  if ((m = tok.match(/^(-?)(\d+)\s+(\d{1,2})\/(2|4|8|16)$/))){   // "50 1/2", "51 3/4", "45 5/8"
+    const num = +m[3], den = +m[4];
+    if (num >= den || (num*16) % den) return null;
+    return (m[1]?-1:1) * ((+m[2])*16 + num*(16/den));
   }
   if (/^-?\d+\.\d+$/.test(tok)) return fromDecimal(parseFloat(tok));
-  if (/^[0-7]$/.test(tok) && prevS16 != null){
-    const rem = (+tok)*2;
+  // fraction-only ("5/8", "1/2") or bare eighth digit: with a reference price
+  // it's shorthand for the nearest price carrying that fraction
+  let sh = null;
+  if (/^[0-7]$/.test(tok) && prevS16 != null) sh = (+tok)*2;
+  else if ((m = tok.match(/^(\d{1,2})\/(2|4|8|16)$/))){
+    const num = +m[1], den = +m[2];
+    if (num < den && (num*16) % den === 0) sh = num*(16/den);
+  }
+  if (sh != null){
+    if (prevS16 == null) return /\//.test(tok) ? sh : parseInt(tok,10)*16;
     let best = null;
     for (let c = prevS16-16; c <= prevS16+16; c++){
-      if (Math.abs(c)%16 !== rem) continue;
+      if (Math.abs(c)%16 !== sh) continue;
       if (best === null || Math.abs(c-prevS16) < Math.abs(best-prevS16)) best = c;
     }
     return best;
@@ -198,18 +206,23 @@ function parsePrice(tok, prevS16){
   if (/^-?\d+$/.test(tok)) return parseInt(tok,10)*16;
   return null;
 }
-// Split "51 4/8 / 50 5/8", "51.5/50.625", "4/5", "4 5" into two price tokens.
+// Split "51 1/2 / 50 5/8", "51.5/50.625", "4/5", "4 5" into two price tokens.
 function splitAnswer(text){
   const t = text.trim();
   if (!t) return null;
-  const prot = t.replace(/([0-7])\s*\/\s*(8|16)\b/g, '$1_$2');
+  if (t.indexOf(' / ') >= 0){                       // spaced slash is unambiguous
+    const pp = t.split(' / ');
+    if (pp.length === 2 && pp[0].trim() && pp[1].trim())
+      return [pp[0].trim(), pp[1].trim()];
+  }
+  const prot = t.replace(/(?<![\d.])(\d{1,2})\s*\/\s*(2|4|8|16)\b(?!\.)/g, '$1_$2');
   let parts = prot.split(/\s*[\/,;]\s*/).filter(function(s){ return s.trim() !== ''; });
   if (parts.length === 1){
     const mm = prot.match(/^([0-7])\s+([0-7])$/);
     if (mm) parts = [mm[1], mm[2]];
   }
   if (parts.length !== 2) return null;
-  return parts.map(function(p){ return p.replace(/_(8|16)/g, '/$1').trim(); });
+  return parts.map(function(p){ return p.replace(/_(2|4|8|16)/g, '/$1').trim(); });
 }
 // conv 'ob' → typed order is offer then bid; 'bo' → bid then offer.
 // prev = previous implied {bid, offer} (for shorthand handle resolution).
@@ -382,7 +395,7 @@ function upK(k){ return /^\d+y$/.test(k) ? k.toUpperCase() : k; }
 function sideName(s){ return s; } // 'bid' | 'offer'
 function shockText(shock, post){
   return upK(shock.key) + ' ' + sideName(shock.side) + ' ' +
-    (shock.dir === 'improve' ? 'improves' : 'worsens') + ' ' + formatSize(shock.size) +
+    (shock.dir === 'improve' ? 'improves' : 'worsens') + ' ' + formatDelta(shock.size) +
     ' → ' + formatPrice(post[shock.key][shock.side]);
 }
 function formulaCaption(st){
@@ -415,7 +428,7 @@ function derivation(q){
       : F(a.offer)+' + '+F(b.offer)+' = '+F(q.newImp.offer);
   }
   const twice = (st.type === 'fly' && shock.key === st.belly)
-    ? ' Belly counts twice — a ' + formatSize(shock.size) + ' change moves the implied ' + formatSize(shock.size*2) + '.'
+    ? ' Belly counts twice — a ' + formatDelta(shock.size) + ' change moves the implied ' + formatDelta(shock.size*2) + '.'
     : '';
   return upK(shock.key) + ' ' + shock.side + ' feeds the implied ' + movedSide + ': ' + formula +
     '. ' + otherSide.charAt(0).toUpperCase() + otherSide.slice(1) + ' side untouched.' + twice;
@@ -531,9 +544,9 @@ function runTests(){
   eq('toSixteenths 45 2/8', toSixteenths(45,2), 724);
   eq('fromDecimal 50.625', fromDecimal(50.625), 810);
   eq('fromDecimal rejects off-grid', fromDecimal(50.63), null);
-  eq('format 45 2/8', formatPrice(724), '45 2/8');
+  eq('format reduces to quarters', formatPrice(724), '45 1/4');
   eq('format reduces 10/16', formatPrice(730), '45 5/8');
-  eq('format keeps 0/8', formatPrice(736), '46 0/8');
+  eq('format drops zero fraction', formatPrice(736), '46');
   eq('format negative', formatPrice(-566), '-35 3/8');
 
   // WORKED EXAMPLE — spread 5s10s off 5y 724/732, 10y 1540/1548
@@ -542,8 +555,8 @@ function runTests(){
   eq('5s10s label', SP.label, '5s10s');
   const imp0 = deriveImplied(SP, B);
   eq('worked: implied before', imp0, {bid:808, offer:824});
-  eq('worked: display bid', formatPrice(imp0.bid), '50 4/8');
-  eq('worked: display offer', formatPrice(imp0.offer), '51 4/8');
+  eq('worked: display bid', formatPrice(imp0.bid), '50 1/2');
+  eq('worked: display offer', formatPrice(imp0.offer), '51 1/2');
   const shock = { key:'5y', side:'offer', dir:'improve', size:2 };  // 45 6/8 → 45 5/8
   const B2 = applyShock(B, shock);
   eq('worked: 5y offer 732→730', B2['5y'], {bid:724, offer:730});
@@ -592,6 +605,13 @@ function runTests(){
   eq('parse shorthand pair 4/5', parseAnswer('4/5', 'ob', prev), {kind:'market', offer:824, bid:810});
   eq('parse shorthand pair "4 5"', parseAnswer('4 5', 'ob', prev), {kind:'market', offer:824, bid:810});
   eq('parse unchanged', parseAnswer('u', 'ob', prev), {kind:'unchanged'});
+  eq('parse halves', parseAnswer('51 1/2 / 50 5/8', 'ob', prev), {kind:'market', offer:824, bid:810});
+  eq('parsePrice quarters', parsePrice('51 3/4', null), 828);
+  eq('parsePrice rejects 5/4', parsePrice('51 5/4', null), null);
+  eq('fraction shorthand w/ prev', parsePrice('1/2', 808), 808);
+  eq('fraction shorthand 5/8 w/ prev', parsePrice('5/8', 808), 810);
+  eq('spaced slash keeps small ints', splitAnswer('9 / 4'), ['9','4']);
+  eq('fraction pair shorthand', parseAnswer('5/8 / 1/2', 'bo', {bid:808, offer:824}), {kind:'market', bid:810, offer:824});
   eq('parse bid/offer order', parseAnswer('50 5/8 / 51 4/8', 'bo', prev), {kind:'market', bid:810, offer:824});
   eq('parse garbage', parseAnswer('hello', 'ob', prev), null);
   eq('parse whole bp', parsePrice('51', null), 816);
@@ -826,7 +846,7 @@ function Drill({ level, speed, conv, statsRef, onEnd }){
   const onSubmit = (e) => {
     e.preventDefault();
     const ans = parseAnswer(input, conv, q.oldImp);
-    if (!ans){ setErr('could not read that — e.g. "51 4/8 / 50 5/8", "51.5/50.625" or fractions "4/5"'); return; }
+    if (!ans){ setErr('could not read that — e.g. "51 1/2 / 50 5/8", "51.5/50.625" or fractions "5/8 / 1/2"'); return; }
     submit(ans);
   };
 
@@ -858,7 +878,7 @@ function Drill({ level, speed, conv, statsRef, onEnd }){
           <input ref={inputRef} value={input} autoFocus autoComplete="off" spellCheck="false"
                  onChange={e => { setInput(e.target.value); setErr(null); }}
                  placeholder={'new implied ' + (conv === 'ob' ? 'offer / bid' : 'bid / offer')} />
-          <div className="hint">handles {handles} · type "{conv === 'ob' ? 'offer / bid' : 'bid / offer'}" · fractions only is fine ("4/5") · Enter submit · U unchanged</div>
+          <div className="hint">handles {handles} · type "{conv === 'ob' ? 'offer / bid' : 'bid / offer'}" · fractions only is fine ("5/8 / 1/2") · Enter submit · U unchanged</div>
           {err && <div className="err">{err}</div>}
         </form>
       ) : (
@@ -913,12 +933,12 @@ function TriangleDrill({ speed, statsRef, onEnd }){
     e.preventDefault();
     if (stage === 'A'){
       const v = parsePrice(input.trim(), null);
-      if (v === null){ setErr('one price — "115", "115 0/8" or "114.875"'); return; }
+      if (v === null){ setErr('one price — "115", "115 1/2" or "114.875"'); return; }
       setResA({ ok: v === scen.impliedA.px, val: v });
       setInput(''); setErr(null); setStage('B');
     } else {
       const v = parseTwoLoose(input);
-      if (!v){ setErr('two prices, "/"-separated — e.g. "109 4/8 / 4 4/8" (bare numbers are whole bp)'); return; }
+      if (!v){ setErr('two prices, "/"-separated — e.g. "109 1/2 / 4 1/2" (bare numbers are whole bp)'); return; }
       conclude(v[0] === scen.answers[0].px && v[1] === scen.answers[1].px, false);
     }
   };
@@ -1012,7 +1032,7 @@ function TriangleDrill({ speed, statsRef, onEnd }){
                    ? 'implied ' + L(scen.impliedA.inst) + ' ' + scen.impliedA.side
                    : L(a0.inst) + ' ' + a0.side + ' / ' + L(a1.inst) + ' ' + a1.side} />
           <div className="hint">{stage === 'A'
-            ? 'one price · "115", "115 0/8", "114.875" · Enter submit'
+            ? 'one price · "115", "115 1/2", "114.875" · Enter submit'
             : 'two prices in that order, "/"-separated · bare numbers are whole bp · Enter submit'}</div>
           {err && <div className="err">{err}</div>}
         </form>
@@ -1158,7 +1178,7 @@ function Menu({ speed, conv, onStart, onToggleSpeed, onToggleConv, testResult })
         <div className="opt"><b>S</b> speed mode: {speed ? 'ON — 10s per question' : 'off'} · <b>O</b> quotes: {conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'}</div>
         <div className="opt">offer = pay side (higher) · bid = receive side (lower) · improve = tighter (bid up / offer down)</div>
         <div className="opt">triangle: 1Y offer 110 + 1x2 offer 5 → implied 2Y offer 115; a 114 bid prints → 1Y bid 109, 1x2 bid 4 — the Δ passes 1:1</div>
-        <div className="opt">answer like "51 4/8 / 50 5/8" or "51.5/50.625" or just fractions "4/5" · U = unchanged · all prices tick in 1/8 bp</div>
+        <div className="opt">answer like "51 1/2 / 50 5/8" or "51.5/50.625" or just fractions "5/8 / 1/2" · U = unchanged · all prices tick in 1/8 bp</div>
       </div>
     </div>
   );

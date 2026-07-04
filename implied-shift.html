@@ -68,6 +68,11 @@ body{background:radial-gradient(1200px 600px at 50% -10%,#0e1d38 0%,transparent 
   background:var(--panel);border:1px solid var(--border2);border-radius:10px;padding:.55rem .8rem;width:100%;outline:none}
 .ansform input:focus{border-color:var(--cyan);box-shadow:0 0 10px rgba(91,209,255,.15)}
 .hint{font-family:var(--mono);font-size:.68rem;color:var(--muted)}
+.choices{display:flex;flex-direction:column;gap:.4rem;margin-bottom:.5rem}
+.choice{display:flex;align-items:baseline;gap:.9rem;background:var(--panel);border:1px solid var(--border2);
+  border-radius:10px;padding:.5rem .8rem;cursor:pointer}
+.choice:hover{border-color:var(--cyan);box-shadow:0 0 8px rgba(91,209,255,.12)}
+.cnum{font-family:var(--mono);font-weight:700;color:var(--green);font-size:1.05rem;min-width:1.2rem}
 .err{font-family:var(--mono);font-size:.75rem;color:var(--red)}
 .fb{border-radius:10px;padding:.7rem .9rem;margin-bottom:.7rem;border:1px solid}
 .fb.ok{background:rgba(57,255,139,.07);border-color:rgba(57,255,139,.4)}
@@ -529,6 +534,62 @@ function triDerivLines(scen){
   return lines;
 }
 
+// ---- multiple-choice answers: one keypress, traps are the classic mistakes ----
+function shuffleArr(a){ for (let i = a.length-1; i > 0; i--){ const j = ri(0,i); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+function mktKey(m){ return m.bid + '|' + m.offer; }
+// Options for a shift question: correct new implied + 3 traps drawn from
+// {unchanged, wrong side, wrong direction, parallel shift, wrong multiple}.
+function genShiftChoices(q){
+  const old = q.oldImp, neu = q.newImp;
+  const mult = (q.structure.type === 'fly' && q.shock.key === q.structure.belly) ? 2 : 1;
+  const isUnch = neu.bid === old.bid && neu.offer === old.offer;
+  const d = isUnch ? q.shock.size*mult : (neu.bid - old.bid) + (neu.offer - old.offer);
+  const u = d/mult, w = (mult === 2 ? 1 : 2)*u;    // the 1x/2x confusion move
+  function mk(b,o){ return { bid:b, offer:o }; }
+  const correct = mk(neu.bid, neu.offer);
+  const seen = {}; seen[mktKey(correct)] = 1;
+  let pool = [ mk(old.bid, old.offer),
+    mk(old.bid + d, old.offer), mk(old.bid - d, old.offer),
+    mk(old.bid, old.offer + d), mk(old.bid, old.offer - d),
+    mk(old.bid + d, old.offer + d),
+    mk(old.bid + w, old.offer), mk(old.bid, old.offer + w) ];
+  pool = pool.filter(function(m){
+    if (m.bid >= m.offer || seen[mktKey(m)]) return false;
+    seen[mktKey(m)] = 1; return true;
+  });
+  shuffleArr(pool);
+  const traps = pool.slice(0, 3);
+  for (let k = 2; traps.length < 3; k++){
+    const m = mk(old.bid - k*Math.abs(u), old.offer + k*Math.abs(u));
+    if (!seen[mktKey(m)]){ seen[mktKey(m)] = 1; traps.push(m); }
+  }
+  const options = shuffleArr(traps.concat([correct]));
+  return { options: options,
+           correctIdx: options.findIndex(function(m){ return mktKey(m) === mktKey(correct); }) };
+}
+// Triangle options. Phase A: correct implied + {sign-flip of the identity,
+// 1/8 off, 1/2 or 1bp off}. Phase B: correct pair + {both legs the wrong
+// way, only one leg repriced}.
+function genTriChoices(scen){
+  const P = scen.impliedA.px;
+  const r = TRI_RULES[scen.impliedA.inst][scen.impliedA.side];
+  const v0 = scen.levels[r.from[0][0]], v1 = scen.levels[r.from[1][0]];
+  const flip = r.sign === 1 ? Math.abs(v0 - v1) : v0 + v1;
+  const seenA = {}; seenA[P] = 1;
+  const candsA = [flip, P + pick([2,-2]), P + pick([16,-16]), P + pick([8,-8]), P + 4, P - 4, P + 6];
+  const trapsA = [];
+  candsA.forEach(function(x){ if (trapsA.length < 3 && x > 0 && !seenA[x]){ seenA[x] = 1; trapsA.push(x); } });
+  const optionsA = shuffleArr(trapsA.concat([P]));
+  const a0 = scen.answers[0], a1 = scen.answers[1];
+  const l0 = scen.levels[a0.inst], l1 = scen.levels[a1.inst];
+  const C = [a0.px, a1.px];
+  const optionsB = shuffleArr([ [2*l0 - a0.px, 2*l1 - a1.px], [a0.px, l1], [l0, a1.px], C ]);
+  return {
+    A: { options: optionsA, correctIdx: optionsA.indexOf(P) },
+    B: { options: optionsB, correctIdx: optionsB.findIndex(function(p){ return p[0] === C[0] && p[1] === C[1]; }) }
+  };
+}
+
 // ==PURE-END==
 
 // ==TESTS-BEGIN==
@@ -660,6 +721,34 @@ function runTests(){
     });
   }
   eq('tri scenarios ×200: 1:1 pass-through holds', triBad, 0);
+
+  // MULTIPLE CHOICE — correct always present, 4 unique uncrossed options
+  let mcBad = 0;
+  for (let t = 0; t < 200; t++){
+    const lv = pick([2,3,4,5]);
+    const round = genRound(lv);
+    const q = genQuestion({ level: lv, board: round.board, boardKeys: round.boardKeys,
+      structures: round.structures, targetIdx: 0, stats: {} });
+    const c = genShiftChoices(q);
+    if (c.options.length !== 4) mcBad++;
+    if (mktKey(c.options[c.correctIdx]) !== mktKey(q.newImp)) mcBad++;
+    const sn = {};
+    c.options.forEach(function(m){ if (sn[mktKey(m)] || m.bid >= m.offer) mcBad++; sn[mktKey(m)] = 1; });
+  }
+  eq('shift choices ×200 valid', mcBad, 0);
+  let tcBad = 0;
+  for (let t = 0; t < 200; t++){
+    const sc = genTriScenario();
+    const tc = genTriChoices(sc);
+    if (tc.A.options.length !== 4 || tc.A.options[tc.A.correctIdx] !== sc.impliedA.px) tcBad++;
+    if (new Set(tc.A.options).size !== 4) tcBad++;
+    if (tc.B.options.length !== 4) tcBad++;
+    const cb = tc.B.options[tc.B.correctIdx];
+    if (cb[0] !== sc.answers[0].px || cb[1] !== sc.answers[1].px) tcBad++;
+    const sb = new Set(tc.B.options.map(function(p){ return p.join('|'); }));
+    if (sb.size !== 4) tcBad++;
+  }
+  eq('tri choices ×200 valid', tcBad, 0);
   return { count: count, failed: failed };
 }
 // ==TESTS-END==
@@ -767,7 +856,7 @@ function ImpliedPanels({ round, q, conv }){
   );
 }
 
-function Drill({ level, speed, conv, statsRef, onEnd }){
+function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
   const [round] = useState(() => genRound(level));
   const historyRef = useRef([]);
   const makeQ = useCallback((board, id) => {
@@ -776,6 +865,7 @@ function Drill({ level, speed, conv, statsRef, onEnd }){
       structures: round.structures, targetIdx, stats: statsRef.current });
     q.id = id;
     q.text = shockText(q.shock, q.post);
+    q.choices = genShiftChoices(q);
     return q;
   }, [level, round, statsRef]);
   const [q, setQ] = useState(() => makeQ(round.board, 1));
@@ -838,10 +928,14 @@ function Drill({ level, speed, conv, statsRef, onEnd }){
           (!inputRef.current || inputRef.current.value.trim() === '')){
         e.preventDefault(); submit({ kind:'unchanged' });
       }
+      if (phase === 'answer' && inputMode === 'keys' && e.key >= '1' && e.key <= '4'){
+        const m = q.choices.options[+e.key - 1];
+        if (m){ e.preventDefault(); submit({ kind:'market', bid: m.bid, offer: m.offer }); }
+      }
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [phase, next, submit, onEnd]);
+  }, [phase, next, submit, onEnd, inputMode, q]);
 
   const onSubmit = (e) => {
     e.preventDefault();
@@ -873,7 +967,19 @@ function Drill({ level, speed, conv, statsRef, onEnd }){
         <span className="shock-text">{q.text}</span>
         {speed && phase === 'answer' && <span className="clock">{Math.max(0, remaining/1000).toFixed(1)}s</span>}
       </div>
-      {phase === 'answer' ? (
+      {phase === 'answer' && inputMode === 'keys' ? (
+        <div className="choices">
+          {q.choices.options.map((m, i) => (
+            <div key={q.id + '-' + i} className="choice"
+                 onClick={() => submit({ kind:'market', bid: m.bid, offer: m.offer })}>
+              <span className="cnum">{i + 1}</span>
+              <Mkt mkt={m} conv={conv} cls="mkt" />
+              {m.bid === q.oldImp.bid && m.offer === q.oldImp.offer && <span className="was">unchanged</span>}
+            </div>
+          ))}
+          <div className="hint">press 1–4 (or click) · new implied {conv === 'ob' ? 'offer / bid' : 'bid / offer'}</div>
+        </div>
+      ) : phase === 'answer' ? (
         <form className="ansform" onSubmit={onSubmit}>
           <input ref={inputRef} value={input} autoFocus autoComplete="off" spellCheck="false"
                  onChange={e => { setInput(e.target.value); setErr(null); }}
@@ -901,9 +1007,9 @@ function Drill({ level, speed, conv, statsRef, onEnd }){
   );
 }
 
-function TriangleDrill({ speed, statsRef, onEnd }){
+function TriangleDrill({ speed, inputMode, statsRef, onEnd }){
   const historyRef = useRef([]);
-  const [scen, setScen] = useState(() => { const s = genTriScenario(); s.id = 1; return s; });
+  const [scen, setScen] = useState(() => { const s = genTriScenario(); s.id = 1; s.choices = genTriChoices(s); return s; });
   const [stage, setStage] = useState('A');                // 'A' build | 'B' cascade | 'feedback'
   const [input, setInput] = useState('');
   const [err, setErr] = useState(null);
@@ -942,9 +1048,19 @@ function TriangleDrill({ speed, statsRef, onEnd }){
       conclude(v[0] === scen.answers[0].px && v[1] === scen.answers[1].px, false);
     }
   };
+  const chooseA = (i) => {
+    const v = scen.choices.A.options[i];
+    if (v == null) return;
+    setResA({ ok: i === scen.choices.A.correctIdx, val: v });
+    setInput(''); setErr(null); setStage('B');
+  };
+  const chooseB = (i) => {
+    if (!scen.choices.B.options[i]) return;
+    conclude(i === scen.choices.B.correctIdx, false);
+  };
   const next = () => {
     if (scen.id >= QUESTIONS_PER_ROUND){ onEnd(historyRef.current); return; }
-    const s = genTriScenario(); s.id = scen.id + 1;
+    const s = genTriScenario(); s.id = scen.id + 1; s.choices = genTriChoices(s);
     setScen(s); setResA(null); setFb(null); setInput(''); setErr(null); setStage('A');
   };
 
@@ -967,10 +1083,14 @@ function TriangleDrill({ speed, statsRef, onEnd }){
       if (stage === 'feedback' && (e.key === 'n' || e.key === 'N' || e.key === 'Enter')){
         e.preventDefault(); next();
       }
+      if (inputMode === 'keys' && stage !== 'feedback' && e.key >= '1' && e.key <= '4'){
+        e.preventDefault();
+        if (stage === 'A') chooseA(+e.key - 1); else chooseB(+e.key - 1);
+      }
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [stage, scen.id]);
+  }, [stage, scen.id, inputMode, resA]);
 
   const L = (inst) => triLabel(scen, inst);
   const streak = (() => { let s = 0; const h = historyRef.current;
@@ -1024,7 +1144,28 @@ function TriangleDrill({ speed, statsRef, onEnd }){
         </span>
         {speed && stage !== 'feedback' && <span className="clock">{Math.max(0, remaining/1000).toFixed(1)}s</span>}
       </div>
-      {stage !== 'feedback' ? (
+      {stage !== 'feedback' && inputMode === 'keys' ? (
+        <div className="choices">
+          {stage === 'A'
+            ? scen.choices.A.options.map((v, i) => (
+                <div key={scen.id + 'A' + i} className="choice" onClick={() => chooseA(i)}>
+                  <span className="cnum">{i + 1}</span>
+                  <span className="mkt">{formatPrice(v)}</span>
+                </div>
+              ))
+            : scen.choices.B.options.map((p, i) => (
+                <div key={scen.id + 'B' + i} className="choice" onClick={() => chooseB(i)}>
+                  <span className="cnum">{i + 1}</span>
+                  <span className="mkt">
+                    {L(a0.inst)} {a0.side} {formatPrice(p[0])}
+                    <span className="slash"> · </span>
+                    {L(a1.inst)} {a1.side} {formatPrice(p[1])}
+                  </span>
+                </div>
+              ))}
+          <div className="hint">press 1–4 (or click)</div>
+        </div>
+      ) : stage !== 'feedback' ? (
         <form className="ansform" onSubmit={submit}>
           <input ref={inputRef} value={input} autoFocus autoComplete="off" spellCheck="false"
                  onChange={e => { setInput(e.target.value); setErr(null); }}
@@ -1154,16 +1295,17 @@ function Summary({ history, stats, onRestart, onMenu }){
   );
 }
 
-function Menu({ speed, conv, onStart, onToggleSpeed, onToggleConv, testResult }){
+function Menu({ speed, conv, inputMode, onStart, onToggleSpeed, onToggleConv, onToggleInput, testResult }){
   useEffect(() => {
     const h = (e) => {
       if (e.key >= '1' && e.key <= '5'){ e.preventDefault(); onStart(+e.key); }
       if (e.key === 's' || e.key === 'S'){ e.preventDefault(); onToggleSpeed(); }
       if (e.key === 'o' || e.key === 'O'){ e.preventDefault(); onToggleConv(); }
+      if (e.key === 't' || e.key === 'T'){ e.preventDefault(); onToggleInput(); }
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [onStart, onToggleSpeed, onToggleConv]);
+  }, [onStart, onToggleSpeed, onToggleConv, onToggleInput]);
   return (
     <div className="menu">
       {testResult.failed.length > 0 &&
@@ -1175,7 +1317,7 @@ function Menu({ speed, conv, onStart, onToggleSpeed, onToggleConv, testResult })
             <span className="num">{l.n}</span><span className="nm">{l.nm}</span><span className="ds">{l.ds}</span>
           </div>
         ))}
-        <div className="opt"><b>S</b> speed mode: {speed ? 'ON — 10s per question' : 'off'} · <b>O</b> quotes: {conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'}</div>
+        <div className="opt"><b>S</b> speed mode: {speed ? 'ON — 10s per question' : 'off'} · <b>O</b> quotes: {conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'} · <b>T</b> answers: {inputMode === 'keys' ? '1–4 CHOICES' : 'TYPED'}</div>
         <div className="opt">offer = pay side (higher) · bid = receive side (lower) · improve = tighter (bid up / offer down)</div>
         <div className="opt">triangle: 1Y offer 110 + 1x2 offer 5 → implied 2Y offer 115; a 114 bid prints → 1Y bid 109, 1x2 bid 4 — the Δ passes 1:1</div>
         <div className="opt">answer like "51 1/2 / 50 5/8" or "51.5/50.625" or just fractions "5/8 / 1/2" · U = unchanged · all prices tick in 1/8 bp</div>
@@ -1189,6 +1331,7 @@ function App(){
   const [level, setLevel] = useState(1);
   const [speed, setSpeed] = useState(false);
   const [conv, setConv] = useState('ob');                  // offer/bid, per desk convention
+  const [inputMode, setInputMode] = useState('keys');      // one-keypress answers by default
   const [roundId, setRoundId] = useState(1);
   const [lastHistory, setLastHistory] = useState([]);
   const statsRef = useRef({});                             // session-only, no persistence
@@ -1205,14 +1348,15 @@ function App(){
         <span className="sub">implied price shift trainer · {conv === 'ob' ? 'offer/bid' : 'bid/offer'} · 1/8 ticks</span>
       </div>
       {phase === 'menu' &&
-        <Menu speed={speed} conv={conv} testResult={testResult}
+        <Menu speed={speed} conv={conv} inputMode={inputMode} testResult={testResult}
               onStart={l => { setLevel(l); setRoundId(r => r+1); setPhase('drill'); }}
               onToggleSpeed={() => setSpeed(s => !s)}
-              onToggleConv={() => setConv(c => c === 'ob' ? 'bo' : 'ob')} />}
+              onToggleConv={() => setConv(c => c === 'ob' ? 'bo' : 'ob')}
+              onToggleInput={() => setInputMode(m => m === 'keys' ? 'typed' : 'keys')} />}
       {phase === 'drill' && (level === 1
-        ? <TriangleDrill key={roundId} speed={speed} statsRef={statsRef}
+        ? <TriangleDrill key={roundId} speed={speed} inputMode={inputMode} statsRef={statsRef}
                          onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
-        : <Drill key={roundId} level={level} speed={speed} conv={conv} statsRef={statsRef}
+        : <Drill key={roundId} level={level} speed={speed} conv={conv} inputMode={inputMode} statsRef={statsRef}
                  onEnd={h => { setLastHistory(h); setPhase('summary'); }} />)}
       {phase === 'summary' &&
         <Summary history={lastHistory} stats={statsRef.current}

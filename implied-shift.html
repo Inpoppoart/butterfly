@@ -48,6 +48,35 @@ body{background:radial-gradient(1200px 600px at 50% -10%,#0e1d38 0%,transparent 
 @keyframes flashUp{0%{background:rgba(57,255,139,.55);color:#04180c}60%{background:rgba(57,255,139,.18)}100%{background:transparent}}
 @keyframes flashDown{0%{background:rgba(255,77,94,.55);color:#1c0407}60%{background:rgba(255,77,94,.18)}100%{background:transparent}}
 .was{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-left:.3rem}
+.screen{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:.5rem .5rem .55rem;margin-bottom:.7rem}
+.shead,.srow{display:grid;grid-template-columns:4.3rem minmax(2.4rem,1fr) auto 3px auto minmax(2.4rem,1fr);
+  gap:.55rem;align-items:center;padding:.32rem .45rem;border-radius:6px}
+.shead{font-family:var(--mono);font-size:.55rem;letter-spacing:.12em;color:var(--muted);background:var(--panel2);margin-bottom:3px}
+.shead .r{text-align:right}
+.srow{border-left:3px solid transparent}
+.srow+.srow{margin-top:2px}
+.srow.outright{background:rgba(42,120,214,.08)}
+.srow.spread{background:rgba(255,210,63,.055)}
+.srow.fly,.srow.chain{background:rgba(144,133,233,.09)}
+.srow.target{border-left-color:var(--cyan);box-shadow:inset 0 0 14px rgba(91,209,255,.06)}
+.slabel{font-family:var(--mono);font-weight:700;font-size:.92rem;color:var(--gold);display:flex;gap:.35rem;align-items:center;white-space:nowrap}
+.slabel.fly,.slabel.chain{color:#b9aef7}
+.slabel .tgt{color:var(--cyan);font-size:.5rem;letter-spacing:.14em;border:1px solid var(--border2);border-radius:4px;padding:0 .22rem}
+.sname{font-family:var(--mono);font-size:.6rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sname.l{text-align:right}
+.sprice{font-family:var(--mono);font-size:1.18rem;font-weight:600;white-space:nowrap;border-radius:4px;padding:0 .15rem}
+.sprice.off{text-align:right}
+.sep{width:3px;align-self:stretch;background:#44598c;border-radius:2px;box-shadow:0 0 6px rgba(91,209,255,.25)}
+.btn{font-family:var(--mono);font-size:.78rem;font-weight:600;color:var(--text);background:var(--panel2);
+  border:1px solid var(--border2);border-radius:8px;padding:.5rem 1rem;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.btn:hover{border-color:var(--cyan)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{color:#04180c;background:var(--green);border-color:var(--green);font-weight:700;font-size:.9rem}
+.btn.end{padding:.28rem .7rem;font-size:.68rem}
+.btnrow{display:flex;gap:.6rem;margin-top:.45rem;flex-wrap:wrap}
+.optbtn{cursor:pointer;border:1px solid var(--border);border-radius:6px;padding:.2rem .5rem;display:inline-block;
+  margin:.15rem .35rem .15rem 0;-webkit-tap-highlight-color:transparent}
+.optbtn:hover{border-color:var(--cyan)}
 .implied-wrap{display:flex;gap:.7rem;flex-wrap:wrap}
 .implied{flex:1 1 200px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:.6rem .8rem;margin-bottom:.7rem}
 .implied.target{border-color:var(--border2);box-shadow:0 0 12px rgba(91,209,255,.12)}
@@ -399,20 +428,20 @@ function genQuestion(opts){
 function upK(k){ return /^\d+y$/.test(k) ? k.toUpperCase() : k; }
 function sideName(s){ return s; } // 'bid' | 'offer'
 function shockText(shock, post){
-  return upK(shock.key) + ' ' + sideName(shock.side) + ' ' +
+  return xLabel(shock.key) + ' ' + sideName(shock.side) + ' ' +
     (shock.dir === 'improve' ? 'improves' : 'worsens') + ' ' + formatDelta(shock.size) +
     ' → ' + formatPrice(post[shock.key][shock.side]);
 }
 function formulaCaption(st){
   if (st.type === 'spread') return upK(st.far) + ' − ' + upK(st.near);
   if (st.type === 'fly') return '2×' + upK(st.belly) + ' − ' + upK(st.near) + ' − ' + upK(st.far);
-  return st.leg1 + ' + ' + st.leg2;
+  return xLabel(st.leg1) + ' + ' + xLabel(st.leg2);
 }
 function derivation(q){
   const st = q.structure, shock = q.shock, post = q.post;
   const F = formatPrice;
   if (q.isDist)
-    return upK(shock.key) + ' is not a leg of ' + st.label + ' — the implied is unchanged. U was the answer.';
+    return xLabel(shock.key) + ' is not a leg of ' + xLabel(st.label) + ' — the implied is unchanged. U was the answer.';
   const movedSide = q.newImp.bid !== q.oldImp.bid ? 'bid' : 'offer';
   const otherSide = movedSide === 'bid' ? 'offer' : 'bid';
   let formula;
@@ -435,7 +464,7 @@ function derivation(q){
   const twice = (st.type === 'fly' && shock.key === st.belly)
     ? ' Belly counts twice — a ' + formatDelta(shock.size) + ' change moves the implied ' + formatDelta(shock.size*2) + '.'
     : '';
-  return upK(shock.key) + ' ' + shock.side + ' feeds the implied ' + movedSide + ': ' + formula +
+  return xLabel(shock.key) + ' ' + shock.side + ' feeds the implied ' + movedSide + ': ' + formula +
     '. ' + otherSide.charAt(0).toUpperCase() + otherSide.slice(1) + ' side untouched.' + twice;
 }
 
@@ -532,6 +561,24 @@ function triDerivLines(scen){
     (scen.incomingSide === 'bid' ? ' under' : ' over') + ' your implied ' + scen.impliedA.side +
     ' — that ' + formatDelta(scen.delta) + ' passes 1:1 into both implieds.');
   return lines;
+}
+
+// ---- dealer-board screen: row placement, labels, name flavor ----
+function xLabel(k){ const m = /^(\d+)s(\d+)s$/.exec(k); return m ? m[1] + 'x' + m[2] : upK(k); }
+var DEALERS = ['CITI','GS','JPM','MS','BARC','BNPP','DB','UBS','NOM','SOCG','HSBC','RBC','MIZ','SMBC','NWM','TD'];
+function dealerFor(label, side, px){          // deterministic: new price = new name
+  const str = label + '|' + side + '|' + px;
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (h*31 + str.charCodeAt(i)) >>> 0;
+  return DEALERS[h % DEALERS.length];
+}
+// Board convention (see broker screens): spreads sit under the front tenor as
+// "X10", flies on the belly tenor as "2/10" (wings), chains under their front leg.
+function structRowMeta(st){
+  if (st.type === 'spread') return { anchor: st.near, tag: 'X' + triNum(st.far), kind: 'spread' };
+  if (st.type === 'fly') return { anchor: st.belly, tag: triNum(st.near) + '/' + triNum(st.far), kind: 'fly' };
+  const m = /^(\d+)s(\d+)s$/.exec(st.label);
+  return { anchor: st.leg1, tag: m ? m[1] + 'x' + m[2] : st.label, kind: 'chain' };
 }
 
 // ---- multiple-choice answers: one keypress, traps are the classic mistakes ----
@@ -749,6 +796,15 @@ function runTests(){
     if (sb.size !== 4) tcBad++;
   }
   eq('tri choices ×200 valid', tcBad, 0);
+
+  // DEALER-BOARD SCREEN metadata
+  eq('xLabel spread market', xLabel('2s5s'), '2x5');
+  eq('xLabel outright', xLabel('10y'), '10Y');
+  eq('meta: spread under front tenor', structRowMeta(mkSpread('5y','10y')), {anchor:'5y', tag:'X10', kind:'spread'});
+  eq('meta: fly on belly by wings', structRowMeta(mkFly('2y','5y','10y')), {anchor:'5y', tag:'2/10', kind:'fly'});
+  eq('meta: chain under front leg', structRowMeta({type:'chain', leg1:'2s5s', leg2:'5s10s', label:'2s10s'}),
+     {anchor:'2s5s', tag:'2x10', kind:'chain'});
+  eq('dealer name deterministic', dealerFor('10Y','bid',1540), dealerFor('10Y','bid',1540));
   return { count: count, failed: failed };
 }
 // ==TESTS-END==
@@ -813,45 +869,98 @@ function Mkt({ mkt, conv, flashSide, dir, qid, cls }){
   );
 }
 
-function Board({ round, q, conv }){
-  const legKeys = structLegs(q.structure).map(l => l.key);
+function ScreenHead({ conv }){
+  const ob = conv === 'ob';
   return (
-    <div className="panel">
-      <div className="panel-title">{round.boardKind} · <span className="conv">{conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'}</span></div>
-      {round.boardKeys.map(k => {
-        const changed = q.shock.key === k;
-        const mkt = changed ? q.post[k] : q.pre[k];
-        return (
-          <div key={k} className={'row' + (legKeys.indexOf(k) >= 0 ? ' leg' : '') + (changed ? ' hot' : '')}>
-            <span className="tenor">{upK(k)}</span>
-            <Mkt mkt={mkt} conv={conv} qid={q.id}
-                 flashSide={changed ? q.shock.side : null} dir={q.shock.dir} />
-            {changed && <span className="was">was {formatPrice(q.pre[k][q.shock.side])}</span>}
-          </div>
-        );
-      })}
+    <div className="shead">
+      <span>INST</span>
+      <span className="r">{ob ? 'OFFERER' : 'BIDDER'}</span>
+      <span className="r">{ob ? 'OFFER' : 'BID'}</span>
+      <span></span>
+      <span>{ob ? 'BID' : 'OFFER'}</span>
+      <span>{ob ? 'BIDDER' : 'OFFERER'}</span>
     </div>
   );
 }
 
-function ImpliedPanels({ round, q, conv }){
+function ScreenRow({ label, kind, target, mkt, conv, qid, flashSide, dir, wasPx, names }){
+  const s0 = conv === 'ob' ? 'offer' : 'bid', s1 = conv === 'ob' ? 'bid' : 'offer';
+  const px = (side) => mkt[side] != null ? formatPrice(mkt[side]) : '—';
+  const nm = (side) => {
+    if (flashSide === side && wasPx != null) return <s>{formatPrice(wasPx)}</s>;
+    return (names !== false && mkt[side] != null) ? dealerFor(label, side, mkt[side]) : '';
+  };
+  const fcls = (side) => flashSide === side ? (dir === 'improve' ? ' flash-up' : ' flash-down') : '';
   return (
-    <div className="implied-wrap">
-      {round.structures.map((st, i) => {
-        const isTarget = i === q.targetIdx;
-        const imp = isTarget ? q.oldImp : deriveImplied(st, q.pre);
+    <div className={'srow ' + kind + (target ? ' target' : '')}>
+      <span className={'slabel ' + kind}>{label}{target && <span className="tgt">TGT</span>}</span>
+      <span className="sname l">{nm(s0)}</span>
+      <span key={qid + '-' + s0} className={'sprice off' + fcls(s0)}>{px(s0)}</span>
+      <span className="sep"></span>
+      <span key={qid + '-' + s1} className={'sprice' + fcls(s1)}>{px(s1)}</span>
+      <span className="sname">{nm(s1)}</span>
+    </div>
+  );
+}
+
+// The dealer board: outrights next to their tenor, spreads (X10) under the
+// front tenor, flies (2/10) on the belly — implied structure rows marked TGT.
+function ScreenBoard({ round, q, conv }){
+  const byAnchor = {};
+  round.structures.forEach((st, i) => {
+    const meta = structRowMeta(st);
+    (byAnchor[meta.anchor] = byAnchor[meta.anchor] || []).push({ st, i, meta });
+  });
+  const instKind = round.boardKind === 'SPREAD MARKETS' ? 'spread' : 'outright';
+  return (
+    <div className="screen">
+      <ScreenHead conv={conv} />
+      {round.boardKeys.map(k => {
+        const changed = q.shock.key === k;
         return (
-          <div key={st.label} className={'implied' + (isTarget ? ' target' : '')}>
-            <div className="imp-head">
-              {st.label}
-              <span className="formula">{formulaCaption(st)}</span>
-              {isTarget && round.structures.length > 1 && <span className="tgt">TARGET</span>}
-            </div>
-            <Mkt mkt={imp} conv={conv} cls="imp-mkt" />
-            <div className="imp-note">implied · before the change</div>
-          </div>
+          <React.Fragment key={k}>
+            <ScreenRow label={xLabel(k)} kind={instKind} conv={conv} qid={q.id}
+                       mkt={changed ? q.post[k] : q.pre[k]}
+                       flashSide={changed ? q.shock.side : null} dir={q.shock.dir}
+                       wasPx={changed ? q.pre[k][q.shock.side] : null} />
+            {(byAnchor[k] || []).map(x => (
+              <ScreenRow key={x.st.label} label={x.meta.tag} kind={x.meta.kind}
+                         target={x.i === q.targetIdx} conv={conv} qid={q.id} names={false}
+                         mkt={x.i === q.targetIdx ? q.oldImp : deriveImplied(x.st, q.pre)} />
+            ))}
+          </React.Fragment>
         );
       })}
+      <div className="hint" style={{marginTop:'.4rem'}}>
+        {xLabel(q.structure.label)} = {formulaCaption(q.structure)} · structure rows are implieds, shown before the change
+      </div>
+    </div>
+  );
+}
+
+// Triangle screen: near tenor, X-spread under it, far tenor — one-sided prices.
+function TriScreen({ scen, stage, conv }){
+  const pmap = { near: {}, far: {}, spread: {} };
+  scen.given.forEach(g => { pmap[g.inst][g.side] = g.px; });
+  const inc = stage !== 'A';
+  if (inc) pmap[scen.incomingInst][scen.incomingSide] = scen.incomingPx;
+  const rows = [
+    { inst: 'near', label: upK(scen.nearK), kind: 'outright' },
+    { inst: 'spread', label: 'X' + triNum(scen.farK), kind: 'spread' },
+    { inst: 'far', label: upK(scen.farK), kind: 'outright' },
+  ];
+  return (
+    <div className="screen">
+      <ScreenHead conv={conv} />
+      {rows.map(r => (
+        <ScreenRow key={r.inst} label={r.label} kind={r.kind} conv={conv} qid={scen.id}
+                   mkt={pmap[r.inst]}
+                   flashSide={inc && scen.incomingInst === r.inst ? scen.incomingSide : null}
+                   dir={scen.incomingSide === 'bid' ? 'improve' : 'worsen'} />
+      ))}
+      <div className="hint" style={{marginTop:'.4rem'}}>
+        X{triNum(scen.farK)} on the {upK(scen.nearK)} line = the {triLabel(scen, 'spread')} spread · one-sided prices
+      </div>
     </div>
   );
 }
@@ -957,11 +1066,12 @@ function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
         <span>LVL <b>{level}</b></span>
         <span>Q <b>{q.id}/{QUESTIONS_PER_ROUND}</b></span>
         <span>STREAK <b>{streak}</b></span>
-        <span>TARGET <b>{q.structure.label}</b></span>
-        <span style={{marginLeft:'auto'}}>ESC — end session</span>
+        <span>TARGET <b>{xLabel(q.structure.label)}</b></span>
+        <span style={{marginLeft:'auto'}}>
+          <button type="button" className="btn end" onClick={() => onEnd(historyRef.current)}>END ✕</button>
+        </span>
       </div>
-      <Board round={round} q={q} conv={conv} />
-      <ImpliedPanels round={round} q={q} conv={conv} />
+      <ScreenBoard round={round} q={q} conv={conv} />
       <div className="shock">
         <span className="shock-label">CHANGE</span>
         <span className="shock-text">{q.text}</span>
@@ -984,8 +1094,12 @@ function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
           <input ref={inputRef} value={input} autoFocus autoComplete="off" spellCheck="false"
                  onChange={e => { setInput(e.target.value); setErr(null); }}
                  placeholder={'new implied ' + (conv === 'ob' ? 'offer / bid' : 'bid / offer')} />
-          <div className="hint">handles {handles} · type "{conv === 'ob' ? 'offer / bid' : 'bid / offer'}" · fractions only is fine ("5/8 / 1/2") · Enter submit · U unchanged</div>
+          <div className="hint">handles {handles} · type "{conv === 'ob' ? 'offer / bid' : 'bid / offer'}" · fractions only is fine ("5/8 / 1/2")</div>
           {err && <div className="err">{err}</div>}
+          <div className="btnrow">
+            <button type="submit" className="btn">SUBMIT ⏎</button>
+            <button type="button" className="btn" onClick={() => submit({ kind:'unchanged' })}>UNCHANGED · U</button>
+          </div>
         </form>
       ) : (
         <div className={'fb ' + (fb.ok ? 'ok' : 'bad')}>
@@ -1000,14 +1114,16 @@ function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
           </div>
           {fb.swap && <div className="fb-swap">right numbers, wrong order — quotes here are {conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'}</div>}
           <div className="fb-deriv">{derivation(q)}</div>
-          <div className="fb-next">N — next</div>
+          <div className="btnrow">
+            <button type="button" className="btn primary" onClick={next}>NEXT ▸&nbsp;&nbsp;N</button>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function TriangleDrill({ speed, inputMode, statsRef, onEnd }){
+function TriangleDrill({ speed, conv, inputMode, statsRef, onEnd }){
   const historyRef = useRef([]);
   const [scen, setScen] = useState(() => { const s = genTriScenario(); s.id = 1; s.choices = genTriChoices(s); return s; });
   const [stage, setStage] = useState('A');                // 'A' build | 'B' cascade | 'feedback'
@@ -1104,29 +1220,11 @@ function TriangleDrill({ speed, inputMode, statsRef, onEnd }){
         <span>Q <b>{scen.id}/{QUESTIONS_PER_ROUND}</b></span>
         <span>STREAK <b>{streak}</b></span>
         <span>TRIANGLE <b>{L('near')} · {L('far')} · {L('spread')}</b></span>
-        <span style={{marginLeft:'auto'}}>ESC — end session</span>
+        <span style={{marginLeft:'auto'}}>
+          <button type="button" className="btn end" onClick={() => onEnd(historyRef.current)}>END ✕</button>
+        </span>
       </div>
-      <div className="panel">
-        <div className="panel-title">GIVEN · ONE-SIDED PRICES</div>
-        {scen.given.map(g => (
-          <div key={g.inst} className="row leg">
-            <span className="tenor">{L(g.inst)}</span>
-            <span className="mkt">{formatPrice(g.px)}</span>
-            <span className="was">{g.side}</span>
-          </div>
-        ))}
-        {stage !== 'A' && (
-          <div className="row hot" key={'in'+scen.id}>
-            <span className="tenor">{L(scen.incomingInst)}</span>
-            <span className="mkt">
-              <span className={'px ' + (scen.incomingSide === 'bid' ? 'flash-up' : 'flash-down')}>
-                {formatPrice(scen.incomingPx)}
-              </span>
-            </span>
-            <span className="was">{scen.incomingSide} · just in</span>
-          </div>
-        )}
-      </div>
+      <TriScreen scen={scen} stage={stage} conv={conv} />
       {resA && (
         <div className="panel" style={{padding:'.45rem .9rem'}}>
           <span className="hint">
@@ -1173,9 +1271,10 @@ function TriangleDrill({ speed, inputMode, statsRef, onEnd }){
                    ? 'implied ' + L(scen.impliedA.inst) + ' ' + scen.impliedA.side
                    : L(a0.inst) + ' ' + a0.side + ' / ' + L(a1.inst) + ' ' + a1.side} />
           <div className="hint">{stage === 'A'
-            ? 'one price · "115", "115 1/2", "114.875" · Enter submit'
-            : 'two prices in that order, "/"-separated · bare numbers are whole bp · Enter submit'}</div>
+            ? 'one price · "115", "115 1/2", "114.875"'
+            : 'two prices in that order, "/"-separated · bare numbers are whole bp'}</div>
           {err && <div className="err">{err}</div>}
+          <div className="btnrow"><button type="submit" className="btn">SUBMIT ⏎</button></div>
         </form>
       ) : (
         <div className={'fb ' + (fb.ok ? 'ok' : 'bad')}>
@@ -1190,7 +1289,9 @@ function TriangleDrill({ speed, inputMode, statsRef, onEnd }){
             {L(a1.inst)} {a1.side} {formatPrice(a1.px)}
           </div>
           {triDerivLines(scen).map((ln, i) => <div key={i} className="fb-deriv">{ln}</div>)}
-          <div className="fb-next">N — next</div>
+          <div className="btnrow">
+            <button type="button" className="btn primary" onClick={next}>NEXT ▸&nbsp;&nbsp;N</button>
+          </div>
         </div>
       )}
     </div>
@@ -1290,7 +1391,10 @@ function Summary({ history, stats, onRestart, onMenu }){
         <div className="tile"><div className="v">{med != null ? (med/1000).toFixed(2)+'s' : '—'}</div><div className="l">MEDIAN (OK)</div></div>
       </div>
       <HeatMap stats={stats} />
-      <div className="keysbar"><b>R</b> — run it again · <b>L</b> — level select</div>
+      <div className="keysbar btnrow" style={{justifyContent:'center'}}>
+        <button type="button" className="btn primary" onClick={onRestart}>RUN AGAIN ▸&nbsp;&nbsp;R</button>
+        <button type="button" className="btn" onClick={onMenu}>LEVELS · L</button>
+      </div>
     </div>
   );
 }
@@ -1317,7 +1421,11 @@ function Menu({ speed, conv, inputMode, onStart, onToggleSpeed, onToggleConv, on
             <span className="num">{l.n}</span><span className="nm">{l.nm}</span><span className="ds">{l.ds}</span>
           </div>
         ))}
-        <div className="opt"><b>S</b> speed mode: {speed ? 'ON — 10s per question' : 'off'} · <b>O</b> quotes: {conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'} · <b>T</b> answers: {inputMode === 'keys' ? '1–4 CHOICES' : 'TYPED'}</div>
+        <div className="opt">
+          <span className="optbtn" onClick={onToggleSpeed}><b>S</b> speed: {speed ? 'ON · 10s' : 'off'}</span>
+          <span className="optbtn" onClick={onToggleConv}><b>O</b> quotes: {conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'}</span>
+          <span className="optbtn" onClick={onToggleInput}><b>T</b> answers: {inputMode === 'keys' ? '1–4 CHOICES' : 'TYPED'}</span>
+        </div>
         <div className="opt">offer = pay side (higher) · bid = receive side (lower) · improve = tighter (bid up / offer down)</div>
         <div className="opt">triangle: 1Y offer 110 + 1x2 offer 5 → implied 2Y offer 115; a 114 bid prints → 1Y bid 109, 1x2 bid 4 — the Δ passes 1:1</div>
         <div className="opt">answer like "51 1/2 / 50 5/8" or "51.5/50.625" or just fractions "5/8 / 1/2" · U = unchanged · all prices tick in 1/8 bp</div>
@@ -1354,7 +1462,7 @@ function App(){
               onToggleConv={() => setConv(c => c === 'ob' ? 'bo' : 'ob')}
               onToggleInput={() => setInputMode(m => m === 'keys' ? 'typed' : 'keys')} />}
       {phase === 'drill' && (level === 1
-        ? <TriangleDrill key={roundId} speed={speed} inputMode={inputMode} statsRef={statsRef}
+        ? <TriangleDrill key={roundId} speed={speed} conv={conv} inputMode={inputMode} statsRef={statsRef}
                          onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
         : <Drill key={roundId} level={level} speed={speed} conv={conv} inputMode={inputMode} statsRef={statsRef}
                  onEnd={h => { setLastHistory(h); setPhase('summary'); }} />)}

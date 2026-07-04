@@ -48,24 +48,28 @@ body{background:radial-gradient(1200px 600px at 50% -10%,#0e1d38 0%,transparent 
 @keyframes flashUp{0%{background:rgba(57,255,139,.55);color:#04180c}60%{background:rgba(57,255,139,.18)}100%{background:transparent}}
 @keyframes flashDown{0%{background:rgba(255,77,94,.55);color:#1c0407}60%{background:rgba(255,77,94,.18)}100%{background:transparent}}
 .was{font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-left:.3rem}
-.screen{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:.5rem .5rem .55rem;margin-bottom:.7rem}
-.shead,.srow{display:grid;grid-template-columns:4.3rem minmax(2.4rem,1fr) auto 3px auto minmax(2.4rem,1fr);
-  gap:.55rem;align-items:center;padding:.32rem .45rem;border-radius:6px}
-.shead{font-family:var(--mono);font-size:.55rem;letter-spacing:.12em;color:var(--muted);background:var(--panel2);margin-bottom:3px}
+.screen{margin-bottom:.7rem}
+.shead{display:grid;grid-template-columns:2.3rem minmax(2rem,1fr) auto 3px auto minmax(2rem,1fr) 2.3rem;
+  gap:.45rem;align-items:center;padding:.28rem .55rem;border-radius:6px;background:var(--panel2);
+  font-family:var(--mono);font-size:.55rem;letter-spacing:.12em;color:var(--muted);margin-bottom:.45rem}
 .shead .r{text-align:right}
-.srow{border-left:3px solid transparent}
-.srow+.srow{margin-top:2px}
-.srow.outright{background:rgba(42,120,214,.08)}
+.pad{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:.3rem .45rem .4rem;margin-bottom:.45rem}
+.tenor-hd{text-align:center;font-family:var(--mono);font-weight:700;color:var(--gold);font-size:1rem;letter-spacing:.08em}
+.rule{height:0;border-top:2px solid var(--border2);margin:.15rem .1rem}
+.srow{display:grid;grid-template-columns:2.3rem minmax(2rem,1fr) auto 3px auto minmax(2rem,1fr) 2.3rem;
+  gap:.45rem;align-items:center;padding:.24rem .1rem;border-radius:6px}
 .srow.spread{background:rgba(255,210,63,.055)}
 .srow.fly,.srow.chain{background:rgba(144,133,233,.09)}
-.srow.target{border-left-color:var(--cyan);box-shadow:inset 0 0 14px rgba(91,209,255,.06)}
-.slabel{font-family:var(--mono);font-weight:700;font-size:.92rem;color:var(--gold);display:flex;gap:.35rem;align-items:center;white-space:nowrap}
-.slabel.fly,.slabel.chain{color:#b9aef7}
-.slabel .tgt{color:var(--cyan);font-size:.5rem;letter-spacing:.14em;border:1px solid var(--border2);border-radius:4px;padding:0 .22rem}
-.sname{font-family:var(--mono);font-size:.6rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srow.target{box-shadow:inset 0 0 14px rgba(91,209,255,.08);outline:1px solid rgba(91,209,255,.25);outline-offset:-1px}
+.slab{font-family:var(--mono);font-weight:700;font-size:.72rem;color:var(--gold);white-space:nowrap}
+.slab.r{text-align:right}
+.slab.fly,.slab.chain{color:#b9aef7}
+.slab .tgt{color:var(--cyan);font-size:.48rem;letter-spacing:.1em;border:1px solid var(--border2);border-radius:4px;padding:0 .18rem;margin-left:.2rem}
+.sname{font-family:var(--mono);font-size:.58rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sname.l{text-align:right}
-.sprice{font-family:var(--mono);font-size:1.18rem;font-weight:600;white-space:nowrap;border-radius:4px;padding:0 .15rem}
+.sprice{font-family:var(--mono);font-size:1.16rem;font-weight:600;white-space:nowrap;border-radius:4px;padding:0 .12rem}
 .sprice.off{text-align:right}
+.sprice.dim{color:var(--border2)}
 .sep{width:3px;align-self:stretch;background:#44598c;border-radius:2px;box-shadow:0 0 6px rgba(91,209,255,.25)}
 .btn{font-family:var(--mono);font-size:.78rem;font-weight:600;color:var(--text);background:var(--panel2);
   border:1px solid var(--border2);border-radius:8px;padding:.5rem 1rem;cursor:pointer;-webkit-tap-highlight-color:transparent}
@@ -564,7 +568,12 @@ function triDerivLines(scen){
 }
 
 // ---- dealer-board screen: row placement, labels, name flavor ----
-function xLabel(k){ const m = /^(\d+)s(\d+)s$/.exec(k); return m ? m[1] + 'x' + m[2] : upK(k); }
+function xLabel(k){
+  let m = /^(\d+)s(\d+)s(\d+)s$/.exec(k);
+  if (m) return m[1] + 'x' + m[2] + 'x' + m[3];
+  m = /^(\d+)s(\d+)s$/.exec(k);
+  return m ? m[1] + 'x' + m[2] : upK(k);
+}
 var DEALERS = ['CITI','GS','JPM','MS','BARC','BNPP','DB','UBS','NOM','SOCG','HSBC','RBC','MIZ','SMBC','NWM','TD'];
 function dealerFor(label, side, px){          // deterministic: new price = new name
   const str = label + '|' + side + '|' + px;
@@ -572,13 +581,44 @@ function dealerFor(label, side, px){          // deterministic: new price = new 
   for (let i = 0; i < str.length; i++) h = (h*31 + str.charCodeAt(i)) >>> 0;
   return DEALERS[h % DEALERS.length];
 }
-// Board convention (see broker screens): spreads sit under the front tenor as
-// "X10", flies on the belly tenor as "2/10" (wings), chains under their front leg.
-function structRowMeta(st){
-  if (st.type === 'spread') return { anchor: st.near, tag: 'X' + triNum(st.far), kind: 'spread' };
-  if (st.type === 'fly') return { anchor: st.belly, tag: triNum(st.near) + '/' + triNum(st.far), kind: 'fly' };
+// Pad convention (from the desk pad): every spread lives on BOTH leg pads.
+// Offering the spread = bidding the front leg / offering the back leg, so the
+// entry flips column on the front pad: a 7x10 offer shows as an X10 bid on the
+// 7Y pad and an X7 offer on the 10Y pad. Labels point along the curve.
+function padEntries(st){
+  if (st.type === 'spread') return [
+    { anchor: st.near, tag: 'X' + triNum(st.far), edge: 'r', flip: true },
+    { anchor: st.far,  tag: 'X' + triNum(st.near), edge: 'l', flip: false }
+  ];
+  if (st.type === 'fly') return [
+    { anchor: st.belly, tag: triNum(st.near) + '/' + triNum(st.far), edge: 'l', flip: false }
+  ];
   const m = /^(\d+)s(\d+)s$/.exec(st.label);
-  return { anchor: st.leg1, tag: m ? m[1] + 'x' + m[2] : st.label, kind: 'chain' };
+  const tag = m ? m[1] + 'x' + m[2] : st.label;
+  return [
+    { anchor: st.leg1, tag: tag, edge: 'r', flip: false },
+    { anchor: st.leg2, tag: tag, edge: 'l', flip: false }
+  ];
+}
+// An implied carries the names of the quotes it is built from (CITI 2Y offer +
+// BNP X3 offer -> implied 3Y offer "CITI,BNP").
+function impliedNames(st, board, side){
+  if (st.type === 'spread'){
+    const f = board[st.far], n = board[st.near];
+    return side === 'bid'
+      ? dealerFor(xLabel(st.far),'bid',f.bid) + ',' + dealerFor(xLabel(st.near),'offer',n.offer)
+      : dealerFor(xLabel(st.far),'offer',f.offer) + ',' + dealerFor(xLabel(st.near),'bid',n.bid);
+  }
+  if (st.type === 'fly'){
+    const n = board[st.near], b = board[st.belly], fw = board[st.far];
+    return side === 'bid'
+      ? dealerFor(xLabel(st.belly),'bid',b.bid) + ',' + dealerFor(xLabel(st.near),'offer',n.offer) + ',' + dealerFor(xLabel(st.far),'offer',fw.offer)
+      : dealerFor(xLabel(st.belly),'offer',b.offer) + ',' + dealerFor(xLabel(st.near),'bid',n.bid) + ',' + dealerFor(xLabel(st.far),'bid',fw.bid);
+  }
+  const a = board[st.leg1], b2 = board[st.leg2];
+  return side === 'bid'
+    ? dealerFor(xLabel(st.leg1),'bid',a.bid) + ',' + dealerFor(xLabel(st.leg2),'bid',b2.bid)
+    : dealerFor(xLabel(st.leg1),'offer',a.offer) + ',' + dealerFor(xLabel(st.leg2),'offer',b2.offer);
 }
 
 // ---- multiple-choice answers: one keypress, traps are the classic mistakes ----
@@ -797,14 +837,24 @@ function runTests(){
   }
   eq('tri choices ×200 valid', tcBad, 0);
 
-  // DEALER-BOARD SCREEN metadata
+  // DEALER-PAD SCREEN metadata
   eq('xLabel spread market', xLabel('2s5s'), '2x5');
   eq('xLabel outright', xLabel('10y'), '10Y');
-  eq('meta: spread under front tenor', structRowMeta(mkSpread('5y','10y')), {anchor:'5y', tag:'X10', kind:'spread'});
-  eq('meta: fly on belly by wings', structRowMeta(mkFly('2y','5y','10y')), {anchor:'5y', tag:'2/10', kind:'fly'});
-  eq('meta: chain under front leg', structRowMeta({type:'chain', leg1:'2s5s', leg2:'5s10s', label:'2s10s'}),
-     {anchor:'2s5s', tag:'2x10', kind:'chain'});
+  eq('xLabel fly triple', xLabel('2s7s30s'), '2x7x30');
+  eq('pad: spread flips on front pad', padEntries(mkSpread('5y','10y')), [
+    {anchor:'5y', tag:'X10', edge:'r', flip:true},
+    {anchor:'10y', tag:'X5', edge:'l', flip:false}]);
+  eq('pad: fly on belly', padEntries(mkFly('2y','5y','10y')),
+    [{anchor:'5y', tag:'2/10', edge:'l', flip:false}]);
+  eq('pad: chain on both legs, no flip', padEntries({type:'chain', leg1:'2s5s', leg2:'5s10s', label:'2s10s'}), [
+    {anchor:'2s5s', tag:'2x10', edge:'r', flip:false},
+    {anchor:'5s10s', tag:'2x10', edge:'l', flip:false}]);
   eq('dealer name deterministic', dealerFor('10Y','bid',1540), dealerFor('10Y','bid',1540));
+  eq('implied bid names = far bid + near offer dealers', impliedNames(SP, B, 'bid'),
+     dealerFor('10Y','bid',1540) + ',' + dealerFor('5Y','offer',732));
+  eq('implied offer names = far offer + near bid dealers', impliedNames(SP, B, 'offer'),
+     dealerFor('10Y','offer',1548) + ',' + dealerFor('5Y','bid',724));
+  eq('fly implied names carry three dealers', impliedNames(FLY, B, 'bid').split(',').length, 3);
   return { count: count, failed: failed };
 }
 // ==TESTS-END==
@@ -873,93 +923,128 @@ function ScreenHead({ conv }){
   const ob = conv === 'ob';
   return (
     <div className="shead">
-      <span>INST</span>
+      <span></span>
       <span className="r">{ob ? 'OFFERER' : 'BIDDER'}</span>
       <span className="r">{ob ? 'OFFER' : 'BID'}</span>
       <span></span>
       <span>{ob ? 'BID' : 'OFFER'}</span>
       <span>{ob ? 'BIDDER' : 'OFFERER'}</span>
+      <span></span>
     </div>
   );
 }
 
-function ScreenRow({ label, kind, target, mkt, conv, qid, flashSide, dir, wasPx, names }){
-  const s0 = conv === 'ob' ? 'offer' : 'bid', s1 = conv === 'ob' ? 'bid' : 'offer';
-  const px = (side) => mkt[side] != null ? formatPrice(mkt[side]) : '—';
-  const nm = (side) => {
-    if (flashSide === side && wasPx != null) return <s>{formatPrice(wasPx)}</s>;
-    return (names !== false && mkt[side] != null) ? dealerFor(label, side, mkt[side]) : '';
-  };
-  const fcls = (side) => flashSide === side ? (dir === 'improve' ? ' flash-up' : ' flash-down') : '';
+// cols: { offer: cell, bid: cell } where cell = { px, name, flash, dir, was }
+function ScreenRow({ labL, labR, kind, target, conv, qid, cols }){
+  const order = conv === 'ob' ? ['offer','bid'] : ['bid','offer'];
+  const c0 = cols[order[0]] || {}, c1 = cols[order[1]] || {};
+  const px = (c) => c.px != null ? formatPrice(c.px) : '—';
+  const nm = (c) => c.was != null ? <s>{formatPrice(c.was)}</s> : (c.name || '');
+  const f = (c) => c.flash ? (c.dir === 'improve' ? ' flash-up' : ' flash-down') : '';
+  const dim = (c) => c.px == null ? ' dim' : '';
   return (
     <div className={'srow ' + kind + (target ? ' target' : '')}>
-      <span className={'slabel ' + kind}>{label}{target && <span className="tgt">TGT</span>}</span>
-      <span className="sname l">{nm(s0)}</span>
-      <span key={qid + '-' + s0} className={'sprice off' + fcls(s0)}>{px(s0)}</span>
+      <span className={'slab ' + kind}>{labL}{target && labR ? <span className="tgt">TGT</span> : null}</span>
+      <span className="sname l">{nm(c0)}</span>
+      <span key={qid + '-a'} className={'sprice off' + f(c0) + dim(c0)}>{px(c0)}</span>
       <span className="sep"></span>
-      <span key={qid + '-' + s1} className={'sprice' + fcls(s1)}>{px(s1)}</span>
-      <span className="sname">{nm(s1)}</span>
+      <span key={qid + '-b'} className={'sprice' + f(c1) + dim(c1)}>{px(c1)}</span>
+      <span className="sname">{nm(c1)}</span>
+      <span className={'slab r ' + kind}>{labR}{target && !labR ? <span className="tgt">TGT</span> : null}</span>
     </div>
   );
 }
 
-// The dealer board: outrights next to their tenor, spreads (X10) under the
-// front tenor, flies (2/10) on the belly — implied structure rows marked TGT.
+// The desk pad: one T-cross per instrument. Outright on top, structures below
+// the rule — a spread lives on BOTH leg pads and flips column on the front pad
+// (offering 7x10 = bidding the 7Y leg / offering the 10Y leg). Implied rows
+// carry the names of the quotes they are built from.
 function ScreenBoard({ round, q, conv }){
   const byAnchor = {};
   round.structures.forEach((st, i) => {
-    const meta = structRowMeta(st);
-    (byAnchor[meta.anchor] = byAnchor[meta.anchor] || []).push({ st, i, meta });
+    const imp = i === q.targetIdx ? q.oldImp : deriveImplied(st, q.pre);
+    padEntries(st).forEach(en => {
+      (byAnchor[en.anchor] = byAnchor[en.anchor] || []).push(
+        Object.assign({ st: st, i: i, imp: imp }, en));
+    });
   });
   const instKind = round.boardKind === 'SPREAD MARKETS' ? 'spread' : 'outright';
+  const ocell = (k, side) => {
+    const changed = q.shock.key === k && q.shock.side === side;
+    const pxv = (q.shock.key === k ? q.post : q.pre)[k][side];
+    return { px: pxv, name: dealerFor(xLabel(k), side, pxv),
+             flash: changed, dir: q.shock.dir, was: changed ? q.pre[k][side] : null };
+  };
+  const scell = (en, structSide) => (
+    { px: en.imp[structSide], name: impliedNames(en.st, q.pre, structSide) });
   return (
     <div className="screen">
       <ScreenHead conv={conv} />
       {round.boardKeys.map(k => {
-        const changed = q.shock.key === k;
+        const ens = byAnchor[k] || [];
         return (
-          <React.Fragment key={k}>
-            <ScreenRow label={xLabel(k)} kind={instKind} conv={conv} qid={q.id}
-                       mkt={changed ? q.post[k] : q.pre[k]}
-                       flashSide={changed ? q.shock.side : null} dir={q.shock.dir}
-                       wasPx={changed ? q.pre[k][q.shock.side] : null} />
-            {(byAnchor[k] || []).map(x => (
-              <ScreenRow key={x.st.label} label={x.meta.tag} kind={x.meta.kind}
-                         target={x.i === q.targetIdx} conv={conv} qid={q.id} names={false}
-                         mkt={x.i === q.targetIdx ? q.oldImp : deriveImplied(x.st, q.pre)} />
+          <div className="pad" key={k}>
+            <div className="tenor-hd">{xLabel(k)}</div>
+            <ScreenRow labL="" labR="" kind={instKind} conv={conv} qid={q.id}
+                       cols={{ offer: ocell(k, 'offer'), bid: ocell(k, 'bid') }} />
+            {ens.length > 0 && <div className="rule"></div>}
+            {ens.map(en => (
+              <ScreenRow key={en.st.label + en.tag}
+                         labL={en.edge === 'l' ? en.tag : ''} labR={en.edge === 'r' ? en.tag : ''}
+                         kind={en.st.type} target={en.i === q.targetIdx} conv={conv} qid={q.id}
+                         cols={en.flip
+                           ? { offer: scell(en, 'bid'), bid: scell(en, 'offer') }
+                           : { offer: scell(en, 'offer'), bid: scell(en, 'bid') }} />
             ))}
-          </React.Fragment>
+          </div>
         );
       })}
       <div className="hint" style={{marginTop:'.4rem'}}>
-        {xLabel(q.structure.label)} = {formulaCaption(q.structure)} · structure rows are implieds, shown before the change
+        {xLabel(q.structure.label)} = {formulaCaption(q.structure)} · implieds shown before the change, named by their source quotes · spreads flip column on the front pad
       </div>
     </div>
   );
 }
 
-// Triangle screen: near tenor, X-spread under it, far tenor — one-sided prices.
+// Triangle: near + far pads, one-sided quotes; the spread quote sits on both
+// pads (flipped on the near pad), the incoming price flashes where it lands.
 function TriScreen({ scen, stage, conv }){
   const pmap = { near: {}, far: {}, spread: {} };
-  scen.given.forEach(g => { pmap[g.inst][g.side] = g.px; });
-  const inc = stage !== 'A';
-  if (inc) pmap[scen.incomingInst][scen.incomingSide] = scen.incomingPx;
-  const rows = [
-    { inst: 'near', label: upK(scen.nearK), kind: 'outright' },
-    { inst: 'spread', label: 'X' + triNum(scen.farK), kind: 'spread' },
-    { inst: 'far', label: upK(scen.farK), kind: 'outright' },
-  ];
+  const who = { near: {}, far: {}, spread: {} };
+  scen.given.forEach(g => { pmap[g.inst][g.side] = g.px; who[g.inst][g.side] = 'given'; });
+  if (stage !== 'A'){
+    pmap[scen.incomingInst][scen.incomingSide] = scen.incomingPx;
+    who[scen.incomingInst][scen.incomingSide] = 'incoming';
+  }
+  const spLabel = triLabel(scen, 'spread');
+  const cell = (inst, side, dispLabel) => {
+    const pxv = pmap[inst][side];
+    if (pxv == null) return {};
+    return { px: pxv, name: dealerFor(dispLabel, side, pxv),
+             flash: who[inst][side] === 'incoming',
+             dir: scen.incomingSide === 'bid' ? 'improve' : 'worsen' };
+  };
   return (
     <div className="screen">
       <ScreenHead conv={conv} />
-      {rows.map(r => (
-        <ScreenRow key={r.inst} label={r.label} kind={r.kind} conv={conv} qid={scen.id}
-                   mkt={pmap[r.inst]}
-                   flashSide={inc && scen.incomingInst === r.inst ? scen.incomingSide : null}
-                   dir={scen.incomingSide === 'bid' ? 'improve' : 'worsen'} />
-      ))}
+      <div className="pad">
+        <div className="tenor-hd">{upK(scen.nearK)}</div>
+        <ScreenRow labL="" labR="" kind="outright" conv={conv} qid={scen.id}
+                   cols={{ offer: cell('near','offer',upK(scen.nearK)), bid: cell('near','bid',upK(scen.nearK)) }} />
+        <div className="rule"></div>
+        <ScreenRow labL="" labR={'X' + triNum(scen.farK)} kind="spread" conv={conv} qid={scen.id}
+                   cols={{ offer: cell('spread','bid',spLabel), bid: cell('spread','offer',spLabel) }} />
+      </div>
+      <div className="pad">
+        <div className="tenor-hd">{upK(scen.farK)}</div>
+        <ScreenRow labL="" labR="" kind="outright" conv={conv} qid={scen.id}
+                   cols={{ offer: cell('far','offer',upK(scen.farK)), bid: cell('far','bid',upK(scen.farK)) }} />
+        <div className="rule"></div>
+        <ScreenRow labL={'X' + triNum(scen.nearK)} labR="" kind="spread" conv={conv} qid={scen.id}
+                   cols={{ offer: cell('spread','offer',spLabel), bid: cell('spread','bid',spLabel) }} />
+      </div>
       <div className="hint" style={{marginTop:'.4rem'}}>
-        X{triNum(scen.farK)} on the {upK(scen.nearK)} line = the {triLabel(scen, 'spread')} spread · one-sided prices
+        the {spLabel} spread sits on both pads — flipped on the {upK(scen.nearK)} pad (a spread offer bids the front leg) · one-sided prices
       </div>
     </div>
   );

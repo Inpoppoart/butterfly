@@ -70,6 +70,7 @@ body{background:radial-gradient(1200px 600px at 50% -10%,#0e1d38 0%,transparent 
 .sprice{font-family:var(--mono);font-size:1.16rem;font-weight:600;white-space:nowrap;border-radius:4px;padding:0 .12rem}
 .sprice.off{text-align:right}
 .sprice.dim{color:var(--border2)}
+.pxf{font-size:.58em;position:relative;top:-.42em;margin-left:.1em;font-weight:700}
 .sep{width:3px;align-self:stretch;background:#44598c;border-radius:2px;box-shadow:0 0 6px rgba(91,209,255,.25)}
 .btn{font-family:var(--mono);font-size:.78rem;font-weight:600;color:var(--text);background:var(--panel2);
   border:1px solid var(--border2);border-radius:8px;padding:.5rem 1rem;cursor:pointer;-webkit-tap-highlight-color:transparent}
@@ -176,9 +177,21 @@ function formatPrice(s16){
   const neg = s16 < 0, a = Math.abs(s16);
   const whole = Math.floor(a/16), rem = a%16;
   if (!rem) return (neg?'-':'') + whole;
+  if (rem % 4 === 0)                               // quarters print as decimals: 143.75
+    return (neg?'-':'') + whole + '.' + (rem === 8 ? '5' : rem/16*100);
   let num = rem, den = 16;
-  while (num % 2 === 0){ num /= 2; den /= 2; }     // 8/16 → 1/2, 4/16 → 1/4, 10/16 → 5/8
+  while (num % 2 === 0){ num /= 2; den /= 2; }     // 10/16 → 5/8; odd eighths stay fractions
   return (neg?'-':'') + whole + ' ' + num + '/' + den;
+}
+// display split for the board: quarters as small raised digits (143⁷⁵ style)
+function priceParts(s16){
+  const neg = s16 < 0, a = Math.abs(s16);
+  const whole = Math.floor(a/16), rem = a%16;
+  const w = (neg?'-':'') + whole;
+  if (!rem) return { w: w, sup: null };
+  if (rem % 4 === 0) return { w: w, sup: String(rem/16*100) };   // 25 / 50 / 75
+  if (rem % 2 === 0) return { w: w, sup: (rem/2) + '/8' };
+  return { w: w, sup: rem + '/16' };
 }
 
 // ---- markets & structures ----
@@ -692,7 +705,13 @@ function runTests(){
   eq('toSixteenths 45 2/8', toSixteenths(45,2), 724);
   eq('fromDecimal 50.625', fromDecimal(50.625), 810);
   eq('fromDecimal rejects off-grid', fromDecimal(50.63), null);
-  eq('format reduces to quarters', formatPrice(724), '45 1/4');
+  eq('format quarters as decimals', formatPrice(724), '45.25');
+  eq('format .75', formatPrice(828), '51.75');
+  eq('format .5', formatPrice(808), '50.5');
+  eq('priceParts quarter', priceParts(828), {w:'51', sup:'75'});
+  eq('priceParts eighth', priceParts(730), {w:'45', sup:'5/8'});
+  eq('priceParts whole', priceParts(736), {w:'46', sup:null});
+  eq('priceParts negative', priceParts(-566), {w:'-35', sup:'3/8'});
   eq('format reduces 10/16', formatPrice(730), '45 5/8');
   eq('format drops zero fraction', formatPrice(736), '46');
   eq('format negative', formatPrice(-566), '-35 3/8');
@@ -703,8 +722,8 @@ function runTests(){
   eq('5s10s label', SP.label, '5s10s');
   const imp0 = deriveImplied(SP, B);
   eq('worked: implied before', imp0, {bid:808, offer:824});
-  eq('worked: display bid', formatPrice(imp0.bid), '50 1/2');
-  eq('worked: display offer', formatPrice(imp0.offer), '51 1/2');
+  eq('worked: display bid', formatPrice(imp0.bid), '50.5');
+  eq('worked: display offer', formatPrice(imp0.offer), '51.5');
   const shock = { key:'5y', side:'offer', dir:'improve', size:2 };  // 45 6/8 → 45 5/8
   const B2 = applyShock(B, shock);
   eq('worked: 5y offer 732→730', B2['5y'], {bid:724, offer:730});
@@ -902,6 +921,11 @@ function heatColor(acc){
   return { bg:'var(--heat-s3)', ink:'#0b0e17' };
 }
 
+function Px({ s16 }){
+  const pp = priceParts(s16);
+  return <span>{pp.w}{pp.sup && <span className="pxf">{pp.sup}</span>}</span>;
+}
+
 function Mkt({ mkt, conv, flashSide, dir, qid, cls }){
   const sides = conv === 'ob' ? ['offer','bid'] : ['bid','offer'];
   return (
@@ -911,7 +935,7 @@ function Mkt({ mkt, conv, flashSide, dir, qid, cls }){
           {i === 1 && <span className="slash"> / </span>}
           <span key={(qid||0)+'-'+s}
                 className={'px' + (flashSide === s ? (dir === 'improve' ? ' flash-up' : ' flash-down') : '')}>
-            {formatPrice(mkt[s])}
+            <Px s16={mkt[s]} />
           </span>
         </React.Fragment>
       ))}
@@ -938,7 +962,7 @@ function ScreenHead({ conv }){
 function ScreenRow({ labL, labR, kind, target, conv, qid, cols }){
   const order = conv === 'ob' ? ['offer','bid'] : ['bid','offer'];
   const c0 = cols[order[0]] || {}, c1 = cols[order[1]] || {};
-  const px = (c) => c.px != null ? formatPrice(c.px) : '—';
+  const px = (c) => c.px != null ? <Px s16={c.px} /> : '—';
   const nm = (c) => c.was != null ? <s>{formatPrice(c.was)}</s> : (c.name || '');
   const f = (c) => c.flash ? (c.dir === 'improve' ? ' flash-up' : ' flash-down') : '';
   const dim = (c) => c.px == null ? ' dim' : '';
@@ -1333,16 +1357,16 @@ function TriangleDrill({ speed, conv, inputMode, statsRef, onEnd }){
             ? scen.choices.A.options.map((v, i) => (
                 <div key={scen.id + 'A' + i} className="choice" onClick={() => chooseA(i)}>
                   <span className="cnum">{i + 1}</span>
-                  <span className="mkt">{formatPrice(v)}</span>
+                  <span className="mkt"><Px s16={v} /></span>
                 </div>
               ))
             : scen.choices.B.options.map((p, i) => (
                 <div key={scen.id + 'B' + i} className="choice" onClick={() => chooseB(i)}>
                   <span className="cnum">{i + 1}</span>
                   <span className="mkt">
-                    {L(a0.inst)} {a0.side} {formatPrice(p[0])}
+                    {L(a0.inst)} {a0.side} <Px s16={p[0]} />
                     <span className="slash"> · </span>
-                    {L(a1.inst)} {a1.side} {formatPrice(p[1])}
+                    {L(a1.inst)} {a1.side} <Px s16={p[1]} />
                   </span>
                 </div>
               ))}
@@ -1369,9 +1393,9 @@ function TriangleDrill({ speed, conv, inputMode, statsRef, onEnd }){
             <span className="stk">streak {streak}</span>
           </div>
           <div className="fb-ans">
-            {L(a0.inst)} {a0.side} {formatPrice(a0.px)}
+            {L(a0.inst)} {a0.side} <Px s16={a0.px} />
             <span className="slash"> · </span>
-            {L(a1.inst)} {a1.side} {formatPrice(a1.px)}
+            {L(a1.inst)} {a1.side} <Px s16={a1.px} />
           </div>
           {triDerivLines(scen).map((ln, i) => <div key={i} className="fb-deriv">{ln}</div>)}
           <div className="btnrow">

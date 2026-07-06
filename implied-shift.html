@@ -53,25 +53,29 @@ body{background:radial-gradient(1200px 600px at 50% -10%,#0e1d38 0%,transparent 
   gap:.45rem;align-items:center;padding:.28rem .55rem;border-radius:6px;background:var(--panel2);
   font-family:var(--mono);font-size:.55rem;letter-spacing:.12em;color:var(--muted);margin-bottom:.45rem}
 .shead .r{text-align:right}
-.pad{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:.3rem .45rem .4rem;margin-bottom:.45rem}
-.tenor-hd{text-align:center;font-family:var(--mono);font-weight:700;color:var(--gold);font-size:1rem;letter-spacing:.08em}
-.rule{height:0;border-top:2px solid var(--border2);margin:.15rem .1rem}
+.pad{background:#000;border:1px solid #262c44;border-radius:6px;margin-bottom:.5rem;overflow:hidden}
+.tenor-hd{display:none}
+.rule{height:0;border-top:1px solid rgba(207,214,228,.55);margin:0}
 .srow{display:grid;grid-template-columns:2.3rem minmax(2rem,1fr) auto 3px auto minmax(2rem,1fr) 2.3rem;
-  gap:.45rem;align-items:center;padding:.24rem .1rem;border-radius:6px}
-.srow.spread{background:rgba(255,210,63,.055)}
-.srow.fly,.srow.chain{background:rgba(144,133,233,.09)}
-.srow.target{box-shadow:inset 0 0 14px rgba(91,209,255,.08);outline:1px solid rgba(91,209,255,.25);outline-offset:-1px}
-.slab{font-family:var(--mono);font-weight:700;font-size:.72rem;color:var(--gold);white-space:nowrap}
+  gap:.45rem;align-items:center;padding:.3rem .5rem;border-radius:0}
+.srow.bar{background:linear-gradient(180deg,#2137e4,#141fb4)}
+.srow.bar .slab{color:#49ff62;font-size:.98rem;letter-spacing:.05em}
+.srow.bar .sprice{color:#ffe89c}
+.srow.bar .sname{color:#cfeaff}
+.srow.bar .sep{background:#8b9bff;box-shadow:none}
+.pad .srow:not(.bar){border-top:1px solid rgba(207,214,228,.5)}
+.pad .srow:not(.bar):first-child{border-top:0}
+.srow.target{box-shadow:inset 0 0 16px rgba(91,209,255,.12);outline:1px solid rgba(91,209,255,.35);outline-offset:-1px}
+.slab{font-family:var(--mono);font-weight:700;font-size:.74rem;color:#5bd1ff;white-space:nowrap}
 .slab.r{text-align:right}
-.slab.fly,.slab.chain{color:#b9aef7}
-.slab .tgt{color:var(--cyan);font-size:.48rem;letter-spacing:.1em;border:1px solid var(--border2);border-radius:4px;padding:0 .18rem;margin-left:.2rem}
-.sname{font-family:var(--mono);font-size:.58rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slab .tgt{color:var(--gold);font-size:.48rem;letter-spacing:.1em;border:1px solid rgba(255,210,63,.5);border-radius:4px;padding:0 .18rem;margin-left:.2rem}
+.sname{font-family:var(--mono);font-size:.58rem;color:#59d0ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-transform:uppercase}
 .sname.l{text-align:right}
-.sprice{font-family:var(--mono);font-size:1.16rem;font-weight:600;white-space:nowrap;border-radius:4px;padding:0 .12rem}
+.sprice{font-family:var(--mono);font-size:1.16rem;font-weight:600;white-space:nowrap;border-radius:4px;padding:0 .12rem;color:#f2f5ff}
 .sprice.off{text-align:right}
-.sprice.dim{color:var(--border2)}
+.sprice.dim{color:#333f5c}
 .pxf{font-size:.58em;position:relative;top:-.42em;margin-left:.1em;font-weight:700}
-.sep{width:3px;align-self:stretch;background:#44598c;border-radius:2px;box-shadow:0 0 6px rgba(91,209,255,.25)}
+.sep{width:3px;align-self:stretch;background:#8fa2d8;border-radius:2px;box-shadow:0 0 5px rgba(143,162,216,.35)}
 .btn{font-family:var(--mono);font-size:.78rem;font-weight:600;color:var(--text);background:var(--panel2);
   border:1px solid var(--border2);border-radius:8px;padding:.5rem 1rem;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .btn:hover{border-color:var(--cyan)}
@@ -292,9 +296,11 @@ function parseAnswer(text, conv, prev){
 }
 
 // ---- board generation ----
+// Real JPY IRS levels (bp): TONA ~0.977% anchors the front end; curve from the
+// desk's spread/fly grid (2x5 = 49, 5x7 = 24.75, 7x10 = 32.125, 2x10 = 105.875).
 var TENORS = [
-  {k:'2y', mid:30}, {k:'5y', mid:45}, {k:'7y', mid:70},
-  {k:'10y', mid:95}, {k:'20y', mid:150}, {k:'30y', mid:180}
+  {k:'2y', mid:141.625}, {k:'5y', mid:190.625}, {k:'7y', mid:215.375},
+  {k:'10y', mid:247.5}, {k:'20y', mid:313.125}, {k:'30y', mid:345.25}
 ];
 function ri(a,b){ return a + Math.floor(Math.random()*(b-a+1)); }
 function pick(a){ return a[ri(0,a.length-1)]; }
@@ -310,7 +316,7 @@ function genOutrights(){
   const board = {};
   let prevMid = -1e9;
   TENORS.forEach(function(t){
-    let mid = t.mid + (Math.random()*10 - 5);
+    let mid = t.mid + (Math.random()*2 - 1);        // ±1bp of drift, eighth-aligned
     if (mid < prevMid + 8) mid = prevMid + 8;       // keep the curve rising
     prevMid = mid;
     board[t.k] = mkTwoWay(mid);
@@ -322,7 +328,7 @@ for (let i = 0; i < TENORS.length-1; i++) SPREAD_KEYS.push(sl(TENORS[i].k) + sl(
 function genSpreadBoard(){
   const board = {};
   for (let i = 0; i < TENORS.length-1; i++){
-    const mid = (TENORS[i+1].mid - TENORS[i].mid) + (Math.random()*6 - 3);
+    const mid = (TENORS[i+1].mid - TENORS[i].mid) + (Math.random()*2 - 1);
     const mid16 = Math.round(mid*8)*2;
     const w = pick([4,6]);
     const bid = mid16 - (w===6 ? 2 : w/2);
@@ -529,8 +535,8 @@ function genTriScenario(){
   // mix of whole-bp, half-bp and eighth-bp prints
   function grid(){ const r = Math.random(); return r < 0.4 ? 16 : r < 0.7 ? 8 : 2; }
   const g1 = grid(), g2 = grid();
-  const nearLvl = Math.round((TENORS[i].mid + Math.random()*10 - 5)*16/g1)*g1;
-  let sprLvl = Math.round(((TENORS[j].mid - TENORS[i].mid) + Math.random()*6 - 3)*16/g2)*g2;
+  const nearLvl = Math.round((TENORS[i].mid + Math.random()*2 - 1)*16/g1)*g1;
+  let sprLvl = Math.round(((TENORS[j].mid - TENORS[i].mid) + Math.random()*2 - 1)*16/g2)*g2;
   if (sprLvl < 16) sprLvl = 16;
   const levels = { near: nearLvl, far: nearLvl + sprLvl, spread: sprLvl };
   const incomingInst = pick(['far','near','spread']);
@@ -600,8 +606,8 @@ function dealerFor(label, side, px){          // deterministic: new price = new 
 // 7Y pad and an X7 offer on the 10Y pad. Labels point along the curve.
 function padEntries(st){
   if (st.type === 'spread') return [
-    { anchor: st.near, tag: 'X' + triNum(st.far), edge: 'r', flip: true },
-    { anchor: st.far,  tag: 'X' + triNum(st.near), edge: 'l', flip: false }
+    { anchor: st.near, tag: 'x' + triNum(st.far), edge: 'r', flip: true },
+    { anchor: st.far,  tag: 'x' + triNum(st.near), edge: 'l', flip: false }
   ];
   if (st.type === 'fly') return [
     { anchor: st.belly, tag: triNum(st.near) + '/' + triNum(st.far), edge: 'l', flip: false }
@@ -861,8 +867,8 @@ function runTests(){
   eq('xLabel outright', xLabel('10y'), '10Y');
   eq('xLabel fly triple', xLabel('2s7s30s'), '2x7x30');
   eq('pad: spread flips on front pad', padEntries(mkSpread('5y','10y')), [
-    {anchor:'5y', tag:'X10', edge:'r', flip:true},
-    {anchor:'10y', tag:'X5', edge:'l', flip:false}]);
+    {anchor:'5y', tag:'x10', edge:'r', flip:true},
+    {anchor:'10y', tag:'x5', edge:'l', flip:false}]);
   eq('pad: fly on belly', padEntries(mkFly('2y','5y','10y')),
     [{anchor:'5y', tag:'2/10', edge:'l', flip:false}]);
   eq('pad: chain on both legs, no flip', padEntries({type:'chain', leg1:'2s5s', leg2:'5s10s', label:'2s10s'}), [
@@ -992,7 +998,6 @@ function ScreenBoard({ round, q, conv }){
         Object.assign({ st: st, i: i, imp: imp }, en));
     });
   });
-  const instKind = round.boardKind === 'SPREAD MARKETS' ? 'spread' : 'outright';
   const ocell = (k, side) => {
     const changed = q.shock.key === k && q.shock.side === side;
     const pxv = (q.shock.key === k ? q.post : q.pre)[k][side];
@@ -1008,10 +1013,8 @@ function ScreenBoard({ round, q, conv }){
         const ens = byAnchor[k] || [];
         return (
           <div className="pad" key={k}>
-            <div className="tenor-hd">{xLabel(k)}</div>
-            <ScreenRow labL="" labR="" kind={instKind} conv={conv} qid={q.id}
+            <ScreenRow labL={xLabel(k)} labR="" kind="bar" conv={conv} qid={q.id}
                        cols={{ offer: ocell(k, 'offer'), bid: ocell(k, 'bid') }} />
-            {ens.length > 0 && <div className="rule"></div>}
             {ens.map(en => (
               <ScreenRow key={en.st.label + en.tag}
                          labL={en.edge === 'l' ? en.tag : ''} labR={en.edge === 'r' ? en.tag : ''}
@@ -1052,11 +1055,9 @@ function TriScreen({ scen, stage, conv }){
     <div className="screen">
       <ScreenHead conv={conv} />
       <div className="pad">
-        <div className="tenor-hd">{upK(scen.nearK)}</div>
-        <ScreenRow labL="" labR="" kind="outright" conv={conv} qid={scen.id}
+        <ScreenRow labL={upK(scen.nearK)} labR="" kind="bar" conv={conv} qid={scen.id}
                    cols={{ offer: cell('near','offer',upK(scen.nearK)), bid: cell('near','bid',upK(scen.nearK)) }} />
-        <div className="rule"></div>
-        <ScreenRow labL="" labR={'X' + triNum(scen.farK)} kind="spread" conv={conv} qid={scen.id}
+        <ScreenRow labL="" labR={'x' + triNum(scen.farK)} kind="spread" conv={conv} qid={scen.id}
                    cols={{ offer: cell('spread','bid',spLabel), bid: cell('spread','offer',spLabel) }} />
       </div>
       <div className="pad">
@@ -1064,7 +1065,7 @@ function TriScreen({ scen, stage, conv }){
         <ScreenRow labL="" labR="" kind="outright" conv={conv} qid={scen.id}
                    cols={{ offer: cell('far','offer',upK(scen.farK)), bid: cell('far','bid',upK(scen.farK)) }} />
         <div className="rule"></div>
-        <ScreenRow labL={'X' + triNum(scen.nearK)} labR="" kind="spread" conv={conv} qid={scen.id}
+        <ScreenRow labL={'x' + triNum(scen.nearK)} labR="" kind="spread" conv={conv} qid={scen.id}
                    cols={{ offer: cell('spread','offer',spLabel), bid: cell('spread','bid',spLabel) }} />
       </div>
       <div className="hint" style={{marginTop:'.4rem'}}>

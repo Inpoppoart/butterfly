@@ -58,7 +58,8 @@ body{background:radial-gradient(1200px 600px at 50% -10%,#0e1d38 0%,transparent 
 .rule{height:0;border-top:1px solid rgba(207,214,228,.55);margin:0}
 .srow{display:grid;grid-template-columns:2.3rem minmax(2rem,1fr) auto 3px auto minmax(2rem,1fr) 2.3rem;
   gap:.45rem;align-items:center;padding:.3rem .5rem;border-radius:0}
-.srow.bar{background:linear-gradient(180deg,#2137e4,#141fb4)}
+.srow.bar{background:linear-gradient(180deg,#2137e4,#141fb4);grid-template-columns:1.2rem minmax(2rem,1fr) auto auto auto minmax(2rem,1fr) 1.2rem}
+.tenor-mid{font-family:var(--mono);font-weight:700;color:#49ff62;font-size:1.02rem;letter-spacing:.06em;text-align:center;padding:0 .5rem;white-space:nowrap}
 .srow.bar .slab{color:#49ff62;font-size:.98rem;letter-spacing:.05em}
 .srow.bar .sprice{color:#ffe89c}
 .srow.bar .sname{color:#cfeaff}
@@ -965,7 +966,7 @@ function ScreenHead({ conv }){
 }
 
 // cols: { offer: cell, bid: cell } where cell = { px, name, flash, dir, was }
-function ScreenRow({ labL, labR, kind, target, conv, qid, cols }){
+function ScreenRow({ labL, labR, kind, target, conv, qid, cols, mid }){
   const order = conv === 'ob' ? ['offer','bid'] : ['bid','offer'];
   const c0 = cols[order[0]] || {}, c1 = cols[order[1]] || {};
   const px = (c) => c.px != null ? <Px s16={c.px} /> : '—';
@@ -977,7 +978,7 @@ function ScreenRow({ labL, labR, kind, target, conv, qid, cols }){
       <span className={'slab ' + kind}>{labL}{target && labR ? <span className="tgt">TGT</span> : null}</span>
       <span className="sname l">{nm(c0)}</span>
       <span key={qid + '-a'} className={'sprice off' + f(c0) + dim(c0)}>{px(c0)}</span>
-      <span className="sep"></span>
+      {mid ? <span className="tenor-mid">{mid}</span> : <span className="sep"></span>}
       <span key={qid + '-b'} className={'sprice' + f(c1) + dim(c1)}>{px(c1)}</span>
       <span className="sname">{nm(c1)}</span>
       <span className={'slab r ' + kind}>{labR}{target && !labR ? <span className="tgt">TGT</span> : null}</span>
@@ -1013,7 +1014,7 @@ function ScreenBoard({ round, q, conv }){
         const ens = byAnchor[k] || [];
         return (
           <div className="pad" key={k}>
-            <ScreenRow labL={xLabel(k)} labR="" kind="bar" conv={conv} qid={q.id}
+            <ScreenRow labL="" labR="" mid={xLabel(k)} kind="bar" conv={conv} qid={q.id}
                        cols={{ offer: ocell(k, 'offer'), bid: ocell(k, 'bid') }} />
             {ens.map(en => (
               <ScreenRow key={en.st.label + en.tag}
@@ -1055,7 +1056,7 @@ function TriScreen({ scen, stage, conv }){
     <div className="screen">
       <ScreenHead conv={conv} />
       <div className="pad">
-        <ScreenRow labL={upK(scen.nearK)} labR="" kind="bar" conv={conv} qid={scen.id}
+        <ScreenRow labL="" labR="" mid={upK(scen.nearK)} kind="bar" conv={conv} qid={scen.id}
                    cols={{ offer: cell('near','offer',upK(scen.nearK)), bid: cell('near','bid',upK(scen.nearK)) }} />
         <ScreenRow labL="" labR={'x' + triNum(scen.farK)} kind="spread" conv={conv} qid={scen.id}
                    cols={{ offer: cell('spread','bid',spLabel), bid: cell('spread','offer',spLabel) }} />

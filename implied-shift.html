@@ -1062,10 +1062,8 @@ function TriScreen({ scen, stage, conv }){
                    cols={{ offer: cell('spread','bid',spLabel), bid: cell('spread','offer',spLabel) }} />
       </div>
       <div className="pad">
-        <div className="tenor-hd">{upK(scen.farK)}</div>
-        <ScreenRow labL="" labR="" kind="outright" conv={conv} qid={scen.id}
+        <ScreenRow labL="" labR="" mid={upK(scen.farK)} kind="bar" conv={conv} qid={scen.id}
                    cols={{ offer: cell('far','offer',upK(scen.farK)), bid: cell('far','bid',upK(scen.farK)) }} />
-        <div className="rule"></div>
         <ScreenRow labL={'x' + triNum(scen.nearK)} labR="" kind="spread" conv={conv} qid={scen.id}
                    cols={{ offer: cell('spread','offer',spLabel), bid: cell('spread','bid',spLabel) }} />
       </div>

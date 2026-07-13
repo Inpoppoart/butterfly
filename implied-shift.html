@@ -58,6 +58,8 @@ body{background:radial-gradient(1200px 600px at 50% -10%,#0e1d38 0%,transparent 
 .rule{height:0;border-top:1px solid rgba(207,214,228,.55);margin:0}
 .srow{display:grid;grid-template-columns:2.3rem minmax(2rem,1fr) auto 3px auto minmax(2rem,1fr) 2.3rem;
   gap:.45rem;align-items:center;padding:.12rem .55rem;border-radius:0}
+.srow.mktrow{background:#0e1636}
+.srow.mktrow .slab{color:#ffd23f}
 .srow.bar{background:linear-gradient(180deg,#2137e4,#141fb4);grid-template-columns:1.2rem minmax(2rem,1fr) auto auto auto minmax(2rem,1fr) 1.2rem;padding:.1rem .55rem}
 .tenor-mid{font-family:var(--mono);font-weight:700;color:#49ff62;font-size:.9rem;letter-spacing:.06em;text-align:center;padding:0 .55rem;white-space:nowrap}
 .srow.bar .slab{color:#49ff62;font-size:.85rem;letter-spacing:.05em}
@@ -352,24 +354,31 @@ function genRound(level){
     const i = ri(0, SPREAD_KEYS.length-2);
     const st = { type:'chain', leg1: SPREAD_KEYS[i], leg2: SPREAD_KEYS[i+1],
                  label: sl(TENORS[i].k) + sl(TENORS[i+2].k) };
-    return { board: board, boardKeys: SPREAD_KEYS.slice(), structures: [st], boardKind: 'SPREAD MARKETS' };
+    return { board: board, boardKeys: [st.leg1, st.leg2], structures: [st], boardKind: 'SPREAD MARKETS' };
   }
   const board = genOutrights();
   const keys = TENORS.map(function(t){ return t.k; });
   if (level === 2){
     const p = pickPair();
-    return { board: board, boardKeys: keys, structures: [mkSpread(p[0], p[1])], boardKind: 'OUTRIGHTS' };
+    return { board: board, boardKeys: [p[0], p[1]], structures: [mkSpread(p[0], p[1])], boardKind: 'OUTRIGHTS' };
   }
   if (level === 3){
     const t = pickTriple();
-    return { board: board, boardKeys: keys, structures: [mkFly(t[0], t[1], t[2])], boardKind: 'OUTRIGHTS' };
+    return { board: board, boardKeys: t.slice(), structures: [mkFly(t[0], t[1], t[2])], boardKind: 'OUTRIGHTS' };
   }
   const p1 = pickPair(); const s1 = mkSpread(p1[0], p1[1]);
   const t3 = pickTriple(); const f = mkFly(t3[0], t3[1], t3[2]);
   let s2 = s1;
   for (let g = 0; g < 30 && s2.label === s1.label; g++){ const p2 = pickPair(); s2 = mkSpread(p2[0], p2[1]); }
   const structures = s2.label === s1.label ? [s1, f] : [s1, f, s2];
-  return { board: board, boardKeys: keys, structures: structures, boardKind: 'OUTRIGHTS' };
+  // only tenors that leg at least one visible structure make the board;
+  // distractor shocks then always hit a leg of some OTHER structure
+  const used = keys.filter(function(k){
+    return structures.some(function(st){
+      return structLegs(st).some(function(l){ return l.key === k; });
+    });
+  });
+  return { board: board, boardKeys: used, structures: structures, boardKind: 'OUTRIGHTS' };
 }
 
 // ---- adaptive question sampling ----
@@ -1007,6 +1016,7 @@ function ScreenBoard({ round, q, conv }){
   };
   const scell = (en, structSide) => (
     { px: en.imp[structSide], name: impliedNames(en.st, q.pre, structSide) });
+  const isMkt = round.boardKind === 'SPREAD MARKETS';
   return (
     <div className="screen">
       <ScreenHead conv={conv} />
@@ -1014,8 +1024,11 @@ function ScreenBoard({ round, q, conv }){
         const ens = byAnchor[k] || [];
         return (
           <div className="pad" key={k}>
-            <ScreenRow labL="" labR="" mid={xLabel(k)} kind="bar" conv={conv} qid={q.id}
-                       cols={{ offer: ocell(k, 'offer'), bid: ocell(k, 'bid') }} />
+            {isMkt
+              ? <ScreenRow labL={xLabel(k)} labR="" kind="mktrow" conv={conv} qid={q.id}
+                           cols={{ offer: ocell(k, 'offer'), bid: ocell(k, 'bid') }} />
+              : <ScreenRow labL="" labR="" mid={xLabel(k)} kind="bar" conv={conv} qid={q.id}
+                           cols={{ offer: ocell(k, 'offer'), bid: ocell(k, 'bid') }} />}
             {ens.map(en => (
               <ScreenRow key={en.st.label + en.tag}
                          labL={en.edge === 'l' ? en.tag : ''} labR={en.edge === 'r' ? en.tag : ''}

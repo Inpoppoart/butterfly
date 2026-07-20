@@ -1154,7 +1154,7 @@ function TriScreen({ scen, stage, conv }){
   );
 }
 
-function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
+function Drill({ level, speed, conv, inputMode, blind, statsRef, onEnd }){
   const [round] = useState(() => genRound(level));
   const historyRef = useRef([]);
   const makeQ = useCallback((board, id) => {
@@ -1172,6 +1172,7 @@ function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
   // progression: call the shift in words first; 4 straight promotes to full quotes
   const [stage, setStage] = useState(inputMode === 'keys' ? 'dir' : 'quote');
   const dirRunRef = useRef(0);
+  const [briefed, setBriefed] = useState(!blind);         // blind mode: read the calls once
   const [input, setInput] = useState('');
   const [err, setErr] = useState(null);
   const [fb, setFb] = useState(null);
@@ -1184,7 +1185,7 @@ function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
     t0.current = performance.now();
     setRemaining(SPEED_MS);
     if (inputRef.current) inputRef.current.focus();
-  }, [q.id]);
+  }, [q.id, briefed]);
 
   const submit = useCallback((ans) => {                   // ans: parsed | 'timeout'
     const ms = Math.round(performance.now() - t0.current);
@@ -1219,18 +1220,22 @@ function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
   }, [q, fb, makeQ, onEnd]);
 
   useEffect(() => {                                       // speed-mode countdown
-    if (!speed || phase !== 'answer') return;
+    if (!speed || phase !== 'answer' || !briefed) return;
     const iv = setInterval(() => {
       const left = SPEED_MS - (performance.now() - t0.current);
       setRemaining(left);
       if (left <= 0) submit('timeout');
     }, 100);
     return () => clearInterval(iv);
-  }, [speed, phase, q.id, submit]);
+  }, [speed, phase, q.id, submit, briefed]);
 
   useEffect(() => {                                       // keys: N next, U unchanged, Esc end
     const h = (e) => {
       if (e.key === 'Escape'){ e.preventDefault(); onEnd(historyRef.current); return; }
+      if (!briefed){
+        if (e.key === 'n' || e.key === 'N' || e.key === 'Enter'){ e.preventDefault(); setBriefed(true); }
+        return;
+      }
       if (phase === 'feedback' && (e.key === 'n' || e.key === 'N' || e.key === 'Enter')){
         e.preventDefault(); next(); return;
       }
@@ -1250,7 +1255,7 @@ function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [phase, next, submit, onEnd, inputMode, q, stage]);
+  }, [phase, next, submit, onEnd, inputMode, q, stage, briefed]);
 
   const onSubmit = (e) => {
     e.preventDefault();
@@ -1278,7 +1283,32 @@ function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
           <button type="button" className="btn end" onClick={() => onEnd(historyRef.current)}>END ✕</button>
         </span>
       </div>
-      <ScreenBoard round={round} q={q} conv={conv} />
+      {!blind && <ScreenBoard round={round} q={q} conv={conv} />}
+      {blind && !briefed && (
+        <div className="panel">
+          <div className="panel-title">OPENING CALLS · read once — then the board is in your head</div>
+          {round.boardKeys.map(k => {
+            const m = round.board[k];
+            const s0 = conv === 'ob' ? 'offer' : 'bid', s1 = conv === 'ob' ? 'bid' : 'offer';
+            return (
+              <div key={k} className="fb-deriv" style={{fontFamily:'var(--mono)'}}>
+                <b style={{color:'var(--gold)'}}>{xLabel(k)}</b>{' — '}
+                {formatPrice(m[s0])} {s0} ({dealerFor(xLabel(k), s0, m[s0])}) / {formatPrice(m[s1])} {s1} ({dealerFor(xLabel(k), s1, m[s1])})
+              </div>
+            );
+          })}
+          <div className="fb-deriv" style={{fontFamily:'var(--mono)'}}>
+            structures in play: {round.structures.map(st => xLabel(st.label)).join(' · ')}
+          </div>
+          <div className="btnrow">
+            <button type="button" className="btn primary" onClick={() => setBriefed(true)}>MEMORISED ▸&nbsp;&nbsp;N</button>
+          </div>
+        </div>
+      )}
+      {blind && briefed && (
+        <div className="hint" style={{marginBottom:'.6rem'}}>board hidden — every change is announced, you keep the prices</div>
+      )}
+      {briefed && <React.Fragment>
       <div className="shock">
         <span className="shock-label">CHANGE</span>
         <span className="shock-text">{q.text}</span>
@@ -1289,7 +1319,7 @@ function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
         <span className="task-text">
           {stage === 'dir' ? 'what does that do to the ' : 're-quote the '}
           <b>{xLabel(q.structure.label)}</b> implied
-          <span className="task-was">was <Mkt mkt={q.oldImp} conv={conv} cls="mkt-sm" implied /></span>
+          {!blind && <span className="task-was">was <Mkt mkt={q.oldImp} conv={conv} cls="mkt-sm" implied /></span>}
         </span>
       </div>
       {phase === 'answer' && inputMode === 'keys' && stage === 'dir' ? (
@@ -1347,11 +1377,12 @@ function Drill({ level, speed, conv, inputMode, statsRef, onEnd }){
           </div>
         </div>
       )}
+      </React.Fragment>}
     </div>
   );
 }
 
-function TriangleDrill({ speed, conv, inputMode, statsRef, onEnd }){
+function TriangleDrill({ speed, conv, inputMode, blind, statsRef, onEnd }){
   const historyRef = useRef([]);
   const [scen, setScen] = useState(() => { const s = genTriScenario(); s.id = 1; s.choices = genTriChoices(s); return s; });
   const [stage, setStage] = useState('A');                // 'A' build | 'B' cascade | 'feedback'
@@ -1452,12 +1483,13 @@ function TriangleDrill({ speed, conv, inputMode, statsRef, onEnd }){
           <button type="button" className="btn end" onClick={() => onEnd(historyRef.current)}>END ✕</button>
         </span>
       </div>
-      <TriScreen scen={scen} stage={stage} conv={conv} />
+      {(!blind || stage === 'A') ? <TriScreen scen={scen} stage={stage} conv={conv} />
+        : <div className="hint" style={{marginBottom:'.6rem'}}>screen hidden — the given prices are in your head now</div>}
       {resA && (
         <div className="panel" style={{padding:'.45rem .9rem'}}>
           <span className="hint">
-            your implied {L(scen.impliedA.inst)} {scen.impliedA.side}: {formatPrice(scen.impliedA.px)}&#8217;{' '}
-            {resA.ok ? '✓' : resA.timeout ? '— time ran out' : '✗ (you had ' + formatPrice(resA.val) + ')'}
+            your implied {L(scen.impliedA.inst)} {scen.impliedA.side}: {blind && stage !== 'feedback' ? '· · ·' : <span>{formatPrice(scen.impliedA.px)}&#8217;</span>}{' '}
+            {resA.ok ? '✓' : resA.timeout ? '— time ran out' : (blind && stage !== 'feedback') ? '✗' : '✗ (you had ' + formatPrice(resA.val) + ')'}
           </span>
         </div>
       )}
@@ -1628,17 +1660,18 @@ function Summary({ history, stats, onRestart, onMenu }){
   );
 }
 
-function Menu({ speed, conv, inputMode, onStart, onToggleSpeed, onToggleConv, onToggleInput, testResult }){
+function Menu({ speed, conv, inputMode, blind, onStart, onToggleSpeed, onToggleConv, onToggleInput, onToggleBlind, testResult }){
   useEffect(() => {
     const h = (e) => {
       if (e.key >= '1' && e.key <= '5'){ e.preventDefault(); onStart(+e.key); }
       if (e.key === 's' || e.key === 'S'){ e.preventDefault(); onToggleSpeed(); }
       if (e.key === 'o' || e.key === 'O'){ e.preventDefault(); onToggleConv(); }
       if (e.key === 't' || e.key === 'T'){ e.preventDefault(); onToggleInput(); }
+      if (e.key === 'v' || e.key === 'V'){ e.preventDefault(); onToggleBlind(); }
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [onStart, onToggleSpeed, onToggleConv, onToggleInput]);
+  }, [onStart, onToggleSpeed, onToggleConv, onToggleInput, onToggleBlind]);
   return (
     <div className="menu">
       {testResult.failed.length > 0 &&
@@ -1654,8 +1687,10 @@ function Menu({ speed, conv, inputMode, onStart, onToggleSpeed, onToggleConv, on
           <span className="optbtn" onClick={onToggleSpeed}><b>S</b> speed: {speed ? 'ON · 10s' : 'off'}</span>
           <span className="optbtn" onClick={onToggleConv}><b>O</b> quotes: {conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'}</span>
           <span className="optbtn" onClick={onToggleInput}><b>T</b> answers: {inputMode === 'keys' ? '1–4 CHOICES' : 'TYPED'}</span>
+          <span className="optbtn" onClick={onToggleBlind}><b>V</b> prices: {blind ? 'IN YOUR HEAD' : 'ON SCREEN'}</span>
         </div>
         <div className="opt">columns as on the desk grid: RECV (offer side, higher) · INST · PAY (bid side, lower) · prices marked ' are implieds, unmarked are live quotes · improve = tighter</div>
+        <div className="opt">V mode: opening calls are read once, then the board disappears — every change is announced and you carry the prices</div>
         <div className="opt">triangle: 1Y offer 110 + 1x2 offer 5 → implied 2Y offer 115; a 114 bid prints → 1Y bid 109, 1x2 bid 4 — the Δ passes 1:1</div>
         <div className="opt">answer like "51 1/2 / 50 5/8" or "51.5/50.625" or just fractions "5/8 / 1/2" · U = unchanged · all prices tick in 1/8 bp</div>
       </div>
@@ -1669,6 +1704,7 @@ function App(){
   const [speed, setSpeed] = useState(false);
   const [conv, setConv] = useState('ob');                  // offer/bid, per desk convention
   const [inputMode, setInputMode] = useState('keys');      // one-keypress answers by default
+  const [blind, setBlind] = useState(false);               // prices announced once, then held in your head
   const [roundId, setRoundId] = useState(1);
   const [lastHistory, setLastHistory] = useState([]);
   const statsRef = useRef({});                             // session-only, no persistence
@@ -1685,15 +1721,16 @@ function App(){
         <span className="sub">implied price shift trainer · {conv === 'ob' ? 'offer/bid' : 'bid/offer'} · 1/8 ticks</span>
       </div>
       {phase === 'menu' &&
-        <Menu speed={speed} conv={conv} inputMode={inputMode} testResult={testResult}
+        <Menu speed={speed} conv={conv} inputMode={inputMode} blind={blind} testResult={testResult}
               onStart={l => { setLevel(l); setRoundId(r => r+1); setPhase('drill'); }}
               onToggleSpeed={() => setSpeed(s => !s)}
               onToggleConv={() => setConv(c => c === 'ob' ? 'bo' : 'ob')}
-              onToggleInput={() => setInputMode(m => m === 'keys' ? 'typed' : 'keys')} />}
+              onToggleInput={() => setInputMode(m => m === 'keys' ? 'typed' : 'keys')}
+              onToggleBlind={() => setBlind(b => !b)} />}
       {phase === 'drill' && (level === 1
-        ? <TriangleDrill key={roundId} speed={speed} conv={conv} inputMode={inputMode} statsRef={statsRef}
+        ? <TriangleDrill key={roundId} speed={speed} conv={conv} inputMode={inputMode} blind={blind} statsRef={statsRef}
                          onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
-        : <Drill key={roundId} level={level} speed={speed} conv={conv} inputMode={inputMode} statsRef={statsRef}
+        : <Drill key={roundId} level={level} speed={speed} conv={conv} inputMode={inputMode} blind={blind} statsRef={statsRef}
                  onEnd={h => { setLastHistory(h); setPhase('summary'); }} />)}
       {phase === 'summary' &&
         <Summary history={lastHistory} stats={statsRef.current}

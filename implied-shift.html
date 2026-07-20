@@ -749,6 +749,267 @@ function genDirChoices(q){
            correctIdx: options.findIndex(function(o){ return key(o) === key(correct); }) };
 }
 
+// ---- THE BOOK: sparse one-sided interests, engine-parity implieds ----
+var BOOK_STAGES = [
+  { tenors:['2y','5y'], spreads:['2s5s'] },
+  { tenors:['2y','5y','10y'], spreads:['2s5s','5s10s'] },
+  { tenors:['2y','5y','10y','20y'], spreads:['2s5s','5s10s','10s20s','2s10s'] }
+];
+function spreadDef(key){ const m = /^(\d+)s(\d+)s$/.exec(key); return m ? { near: m[1]+'y', far: m[2]+'y' } : null; }
+function instLevel(inst){
+  const t = TENORS.filter(function(x){ return x.k === inst; })[0];
+  if (t) return Math.round(t.mid*8)*2;
+  const d = spreadDef(inst);
+  const f = TENORS.filter(function(x){ return x.k === d.far; })[0];
+  const n = TENORS.filter(function(x){ return x.k === d.near; })[0];
+  return Math.round((f.mid - n.mid)*8)*2;
+}
+// one-hop derivation combos per (inst|side): legs read DIRECT quotes only
+function bookRelations(stage){
+  const cfg = BOOK_STAGES[stage-1];
+  const insts = cfg.tenors.concat(cfg.spreads);
+  const rels = {};
+  const add = function(i, sd, legs, op){ (rels[i+'|'+sd] = rels[i+'|'+sd] || []).push({ legs: legs, op: op }); };
+  cfg.spreads.forEach(function(S){
+    const d = spreadDef(S);
+    if (insts.indexOf(d.near) < 0 || insts.indexOf(d.far) < 0) return;
+    add(S,'offer',[[d.far,'offer'],[d.near,'bid']],'sub');
+    add(S,'bid',[[d.far,'bid'],[d.near,'offer']],'sub');
+    add(d.far,'offer',[[d.near,'offer'],[S,'offer']],'add');
+    add(d.far,'bid',[[d.near,'bid'],[S,'bid']],'add');
+    add(d.near,'offer',[[d.far,'offer'],[S,'bid']],'sub');
+    add(d.near,'bid',[[d.far,'bid'],[S,'offer']],'sub');
+  });
+  cfg.spreads.forEach(function(A){ cfg.spreads.forEach(function(B){
+    const da = spreadDef(A), db = spreadDef(B);
+    if (da.far !== db.near) return;
+    const C = da.near.replace('y','') + 's' + db.far.replace('y','') + 's';
+    if (cfg.spreads.indexOf(C) < 0) return;
+    add(C,'bid',[[A,'bid'],[B,'bid']],'add');
+    add(C,'offer',[[A,'offer'],[B,'offer']],'add');
+    add(A,'bid',[[C,'bid'],[B,'offer']],'sub');
+    add(A,'offer',[[C,'offer'],[B,'bid']],'sub');
+    add(B,'bid',[[C,'bid'],[A,'offer']],'sub');
+    add(B,'offer',[[C,'offer'],[A,'bid']],'sub');
+  }); });
+  return { insts: insts, rels: rels };
+}
+function bestDirect(book, inst, side){
+  let best = null;
+  book.forEach(function(i){
+    if (i.inst !== inst || i.side !== side) return;
+    if (!best || (side === 'bid' ? i.px > best.px : i.px < best.px)) best = i;
+  });
+  return best;
+}
+function bestQuote(book, inst, side, R){
+  const d = bestDirect(book, inst, side);
+  let best = d ? { px: d.px, implied: false, legs: [d] } : null;
+  (R.rels[inst+'|'+side] || []).forEach(function(c){
+    const l0 = bestDirect(book, c.legs[0][0], c.legs[0][1]);
+    const l1 = bestDirect(book, c.legs[1][0], c.legs[1][1]);
+    if (!l0 || !l1) return;
+    const px = c.op === 'add' ? l0.px + l1.px : l0.px - l1.px;
+    if (!best || (side === 'bid' ? px > best.px : px < best.px))
+      best = { px: px, implied: true, legs: [l0, l1] };
+  });
+  return best;
+}
+function quoteNames(q){ if (!q) return '—'; return q.legs.map(function(l){ return l.dealer; }).join(',') + (q.implied ? "'" : ''); }
+function gapTable(book, R){
+  const out = [];
+  R.insts.forEach(function(inst){
+    const b = bestQuote(book, inst, 'bid', R), o = bestQuote(book, inst, 'offer', R);
+    if (b && o) out.push({ inst: inst, gap: o.px - b.px, bid: b, offer: o });
+  });
+  out.sort(function(x, y){ return x.gap - y.gap; });
+  return out;
+}
+// a new interest can cross anywhere in the complex (via implieds), so scan
+// the whole gap table after hypothetically adding it — like the real engine
+function findCross(book, inc, R){
+  const after = book.concat([inc]);
+  const gts = gapTable(after, R);
+  for (let i = 0; i < gts.length; i++){
+    const e = gts[i];
+    if (e.gap > 0) continue;
+    const bidHasInc = e.bid.legs.some(function(l){ return l.id === inc.id; });
+    const q = bidHasInc ? e.offer : e.bid;                // the resting side
+    const notInc = function(l){ return l.id !== inc.id; };
+    return { inst: e.inst, px: q.px, implied: q.implied,
+             legs: q.legs.filter(notInc),
+             allLegs: e.bid.legs.concat(e.offer.legs).filter(notInc) };
+  }
+  return null;
+}
+function seedBook(stage){
+  const R = bookRelations(stage);
+  const book = []; let id = 1;
+  R.insts.forEach(function(inst, ix){
+    ['bid','offer'].forEach(function(side){
+      if (ix > 1 && Math.random() < 0.4) return;         // sparse — first two insts stay two-sided
+      const lvl = instLevel(inst);
+      const px = side === 'bid' ? lvl - pick([2,4,6]) : lvl + pick([2,4,6]);
+      book.push({ id: id++, dealer: dealerFor(xLabel(inst), side, px), inst: inst, side: side, px: px });
+    });
+  });
+  return { book: book, R: R, nextId: id };
+}
+// ---- book question text ----
+function descPrint(inc, cross){
+  return 'PRINT — ' + inc.dealer + (inc.side === 'bid' ? ' lifts ' : ' hits ') + xLabel(inc.inst) +
+    ' @ ' + formatPrice(cross.px) + ' vs ' + quoteNames(cross);
+}
+function descNear(inst, gap, oppQ){
+  return 'WORKABLE — ' + xLabel(inst) + ' now ' + formatDelta(gap) + ' apart · call ' + quoteNames(oppQ);
+}
+function descNothing(gt){
+  if (!gt.length) return 'nothing live — no two-sided market';
+  return 'nothing live — tightest is ' + xLabel(gt[0].inst) + ' at ' + formatDelta(gt[0].gap);
+}
+function descGap(e){
+  return xLabel(e.inst) + ' — ' + formatDelta(e.gap) + ' apart · ' + quoteNames(e.offer) + ' offer vs ' + quoteNames(e.bid) + ' bid';
+}
+// WORK IT: which single missing quote completes a print on entry's offer side
+function workItem(book, entry, R){
+  const combos = R.rels[entry.inst+'|offer'] || [];
+  for (let i = 0; i < combos.length; i++){
+    const c = combos[i];
+    const l0 = bestDirect(book, c.legs[0][0], c.legs[0][1]);
+    const l1 = bestDirect(book, c.legs[1][0], c.legs[1][1]);
+    if (!!l0 === !!l1) continue;                         // want exactly one quoted
+    const T = entry.bid.px;                              // need implied offer <= resting bid
+    let inst2, side2, lvl;
+    if (!l0){
+      inst2 = c.legs[0][0]; side2 = c.legs[0][1];
+      lvl = c.op === 'add' ? T - l1.px : T + l1.px;
+    } else {
+      inst2 = c.legs[1][0]; side2 = c.legs[1][1];
+      lvl = c.op === 'add' ? T - l0.px : l0.px - T;
+    }
+    return { inst: inst2, side: side2, lvl: lvl };
+  }
+  return { inst: entry.inst, side: 'offer', lvl: entry.bid.px };   // direct fallback
+}
+function descWork(w){
+  return 'find a ' + xLabel(w.inst) + ' ' + w.side + ' at ' + formatPrice(w.lvl) + ' or better';
+}
+function buildOptions(correct, traps){
+  const seen = {}; seen[correct] = 1;
+  const t = [];
+  traps.forEach(function(x){ if (x && !seen[x] && t.length < 3){ seen[x] = 1; t.push(x); } });
+  let filler = 1;
+  while (t.length < 3){ const f = 'nothing live — book unchanged (' + filler++ + ')'; if (!seen[f]){ seen[f] = 1; t.push(f); } }
+  const options = shuffleArr(t.concat([correct]));
+  return { options: options, correctIdx: options.indexOf(correct) };
+}
+function otherDealer(not){
+  for (let i = 0; i < 12; i++){ const d = pick(DEALERS); if (d !== not) return d; }
+  return DEALERS[0];
+}
+// generate one book question; does NOT mutate book (application happens on next())
+function genBookQuestion(stage, state, stats, isFirst){
+  const book = state.book, R = state.R;
+  const gt = gapTable(book, R);
+  if (isFirst && gt.length >= 2){
+    const correct = descGap(gt[0]);
+    const traps = gt.slice(1, 4).map(descGap);
+    if (traps.length < 3) traps.push(xLabel(gt[0].inst) + ' — ' + formatDelta(gt[0].gap + 2) + ' apart · ' + otherDealer('') + ' offer vs ' + quoteNames(gt[0].bid) + ' bid');
+    const o = buildOptions(correct, traps);
+    return { qtype: 'scan', outcome: 'scan', event: null, text: 'fresh book — what is nearest to printing?',
+             options: o.options, correctIdx: o.correctIdx,
+             deriv: 'gaps: ' + gt.slice(0, 4).map(function(e){ return xLabel(e.inst) + ' ' + formatDelta(e.gap); }).join(' · ') };
+  }
+  if (stage >= 2 && gt.length && Math.random() < 0.2){
+    const entry = pick(gt);
+    const w = workItem(book, entry, R);
+    const correct = descWork(w);
+    const traps = [
+      descWork({ inst: w.inst, side: oppSide(w.side), lvl: w.lvl }),
+      descWork({ inst: w.inst, side: w.side, lvl: w.lvl + (w.side === 'offer' ? 4 : -4) }),
+      descWork({ inst: entry.inst, side: 'bid', lvl: entry.offer.px })
+    ];
+    const o = buildOptions(correct, traps);
+    return { qtype: 'work', outcome: 'work', event: null,
+             text: 'to get ' + xLabel(entry.inst) + ' printed against ' + quoteNames(entry.bid) + ' — what do you need?',
+             options: o.options, correctIdx: o.correctIdx,
+             deriv: 'resting bid ' + formatPrice(entry.bid.px) + ' (' + quoteNames(entry.bid) + ') — ' + correct +
+               ' makes the offer side cross it', entry: entry };
+  }
+  // KNOCK-ON: construct an incoming interest with a target outcome
+  const keys = ['print','near','nothing'].map(function(oc){ return patKey('book','knock',oc,'S'+stage); });
+  const weights = keys.map(function(k){ return comboWeight(stats, k); });
+  const outcome = weightedPick(['print','near','nothing'], weights);
+  const cands = gt.length ? gt : null;
+  let inc = null;
+  if (cands){
+    const entry = pick(gt);
+    const side = pick(['bid','offer']);
+    const opp = bestQuote(book, entry.inst, oppSide(side), R);
+    const base = opp.px;
+    let px;
+    if (outcome === 'print') px = side === 'bid' ? base + pick([0,2]) : base - pick([0,2]);
+    else if (outcome === 'near') px = side === 'bid' ? base - pick([2,4]) : base + pick([2,4]);
+    else px = side === 'bid' ? base - pick([8,12]) : base + pick([8,12]);
+    inc = { id: -1 - Math.floor(Math.random()*1e9), dealer: otherDealer(''), inst: entry.inst, side: side, px: px };
+  } else {
+    const inst = pick(R.insts);
+    const lvl = instLevel(inst);
+    inc = { id: -1 - Math.floor(Math.random()*1e9), dealer: otherDealer(''), inst: inst, side: pick(['bid','offer']),
+            px: lvl - 4 };
+  }
+  const cross = findCross(book, inc, R);
+  const opp2 = bestQuote(book, inc.inst, oppSide(inc.side), R);
+  const gapAfter = opp2 ? (inc.side === 'bid' ? opp2.px - inc.px : inc.px - opp2.px) : null;
+  const bookAfter = book.concat([inc]);
+  const gtAfter = gapTable(bookAfter, R);
+  let actual, correct;
+  if (cross){ actual = 'print'; correct = descPrint(inc, cross); }
+  else if (gapAfter != null && gapAfter <= 4){ actual = 'near'; correct = descNear(inc.inst, gapAfter, opp2); }
+  else { actual = 'nothing'; correct = descNothing(gtAfter); }
+  const traps = [];
+  if (actual === 'print'){
+    traps.push(descNear(inc.inst, 2, cross));                                    // called it workable — it printed
+    traps.push('PRINT — ' + inc.dealer + (inc.side === 'bid' ? ' lifts ' : ' hits ') + xLabel(inc.inst) +
+      ' @ ' + formatPrice(cross.px) + ' vs ' + otherDealer(cross.legs[0].dealer) + (cross.implied ? "'" : ''));
+    traps.push(descNothing(gtAfter));
+  } else if (actual === 'near'){
+    traps.push(descPrint(inc, opp2));                                            // the killer: near-miss called a print
+    traps.push(descNear(inc.inst, gapAfter + 2, opp2));
+    traps.push(descNothing(gtAfter));
+  } else {
+    if (opp2){
+      traps.push(descNear(inc.inst, Math.abs(gapAfter), opp2));
+      traps.push(descPrint(inc, opp2));
+    } else if (gtAfter.length){
+      traps.push(descNear(gtAfter[0].inst, 4, gtAfter[0].offer));
+    }
+    if (gtAfter.length > 1) traps.push('nothing live — tightest is ' + xLabel(gtAfter[1].inst) + ' at ' + formatDelta(gtAfter[1].gap));
+  }
+  const o = buildOptions(correct, traps);
+  return { qtype: 'knock', outcome: actual, event: { kind: 'new', inc: inc, cross: cross },
+           text: 'NEW — ' + inc.dealer + ' ' + (inc.side === 'bid' ? 'bids' : 'offers') + ' ' +
+             formatPrice(inc.px) + ' in ' + xLabel(inc.inst),
+           options: o.options, correctIdx: o.correctIdx,
+           deriv: cross
+             ? 'crossed: ' + quoteNames(cross) + ' ' + oppSide(inc.side) + ' was ' + formatPrice(cross.px) + ' — trade prints, legs come off'
+             : (opp2 ? 'best ' + oppSide(inc.side) + ' is ' + formatPrice(opp2.px) + ' (' + quoteNames(opp2) + ') — gap ' + formatDelta(Math.abs(gapAfter)) : 'no opposing interest') };
+}
+// apply a question's event to the book (called when moving on)
+function applyBookQuestion(state, q){
+  if (!q.event) return state;
+  const inc = q.event.inc;
+  let book = state.book;
+  if (q.event.cross){
+    const gone = {}; (q.event.cross.allLegs || q.event.cross.legs).forEach(function(l){ gone[l.id] = 1; });
+    book = book.filter(function(i){ return !gone[i.id]; });   // legs fill, aggressor filled too
+  } else {
+    inc.id = state.nextId++;
+    book = book.concat([inc]);
+  }
+  return { book: book, R: state.R, nextId: state.nextId };
+}
+
 // ==PURE-END==
 
 // ==TESTS-BEGIN==
@@ -936,6 +1197,62 @@ function runTests(){
   }
   eq('dir choices x200 valid', dcBad, 0);
 
+  // THE BOOK — fixtures (16ths: 2y 142 = 2272, 2s5s 49 = 784, 5y 190/191)
+  const R2 = bookRelations(2);
+  eq('book insts stage2', R2.insts, ['2y','5y','10y','2s5s','5s10s']);
+  const BK = [
+    { id:1, dealer:'CITI', inst:'2y', side:'offer', px:2272 },
+    { id:2, dealer:'GS',   inst:'2s5s', side:'offer', px:784 },
+    { id:3, dealer:'MS',   inst:'5y', side:'bid', px:3040 }
+  ];
+  const iq = bestQuote(BK, '5y', 'offer', R2);
+  eq('implied 5y offer = 2y offer + 2s5s offer', [iq.px, iq.implied], [3056, true]);
+  eq('implied names ticked', quoteNames(iq), "CITI,GS'");
+  const gt = gapTable(BK, R2);
+  // implieds make all three instruments two-sided, each 1bp apart — the cascade
+  eq('gap table: three synthetic two-ways at 1bp', gt.map(function(e){ return e.gap; }), [16,16,16]);
+  eq('gap table covers 2y/5y/2s5s', gt.map(function(e){ return e.inst; }).sort().join(','), '2s5s,2y,5y');
+  eq('lock is a cross', !!findCross(BK, {id:-7, dealer:'X', inst:'5y', side:'bid', px:3056}, R2), true);
+  eq('1/8 through is a cross', !!findCross(BK, {id:-8, dealer:'X', inst:'5y', side:'bid', px:3058}, R2), true);
+  eq('1/8 away is NOT a cross', findCross(BK, {id:-9, dealer:'X', inst:'5y', side:'bid', px:3054}, R2), null);
+  const dcross = findCross(BK.concat([{id:4, dealer:'DB', inst:'2y', side:'bid', px:2272}]),
+    {id:-10, dealer:'X', inst:'2y', side:'offer', px:2272}, R2);
+  eq('direct cross found', [dcross.px, dcross.implied], [2272, false]);
+  // trade consumes legs
+  const st0 = { book: BK.slice(), R: R2, nextId: 10 };
+  const inc0 = { id:-1, dealer:'NWM', inst:'5y', side:'bid', px:3058 };
+  const st1 = applyBookQuestion(st0, { event: { inc: inc0, cross: bestQuote(BK, '5y', 'offer', R2) } });
+  eq('print removes both implied legs', st1.book.map(function(i){ return i.id; }), [3]);
+  // WORK IT: with 10y offer quoted, missing 5s10s bid completes a 5y print
+  const BK2 = BK.concat([{ id:5, dealer:'UBS', inst:'10y', side:'offer', px:3976 }]);
+  const e5y = gapTable(BK2, R2).filter(function(e){ return e.inst === '5y'; })[0];
+  const w = workItem(BK2, e5y, R2);
+  eq('work: find 5s10s bid at 58.5+', [w.inst, w.side, w.lvl], ['5s10s','bid', 936]);
+  // chain relation exists at stage 3
+  const R3 = bookRelations(3);
+  eq('stage3 chain combos on 2s10s', (R3.rels['2s10s|bid'] || []).length >= 2, true);
+  // fuzz: seeded books never rest crossed; generated questions internally consistent
+  let bkBad = 0;
+  for (let t = 0; t < 150; t++){
+    const stg = pick([1,2,3]);
+    let st = seedBook(stg);
+    const g0 = gapTable(st.book, st.R);
+    g0.forEach(function(e){ if (e.gap <= 0) bkBad++; });
+    for (let qn = 0; qn < 8; qn++){
+      const q = genBookQuestion(stg, st, {}, qn === 0);
+      if (q.options.length !== 4) bkBad++;
+      if (q.options[q.correctIdx] == null) bkBad++;
+      const sn = {}; q.options.forEach(function(x){ if (sn[x]) bkBad++; sn[x] = 1; });
+      if (q.event && q.event.cross){
+        const chk = findCross(st.book, q.event.inc, st.R);
+        if (!chk) bkBad++;
+      }
+      st = applyBookQuestion(st, q);
+      gapTable(st.book, st.R).forEach(function(e){ if (e.gap < 0) bkBad++; });
+    }
+  }
+  eq('book fuzz x150 rounds clean', bkBad, 0);
+
   // DEALER-PAD SCREEN metadata
   eq('xLabel spread market', xLabel('2s5s'), '2x5');
   eq('xLabel outright', xLabel('10y'), '10Y');
@@ -971,6 +1288,7 @@ const LEVELS = [
   { n:3, nm:'FLIES',   ds:'belly moves are 2× — the classic trap' },
   { n:4, nm:'CHAINS',  ds:'implied spread chained from two spread markets' },
   { n:5, nm:'MIXED',   ds:'targets rotate, ~25% distractors — press U when your implied is untouched' },
+  { n:6, nm:'THE BOOK', ds:'sparse one-sided interests — spot what prints, what is workable, who to call' },
 ];
 const HEAT_ROWS = [
   { t:'spread', role:'near',     label:'spread · near leg' },
@@ -1603,6 +1921,183 @@ function HeatTable({ rows, cols, stats, keyOf }){
   );
 }
 
+function BookScreen({ state, q, conv }){
+  const cellQ = (inst, side) => {
+    const bq = bestQuote(state.book, inst, side, state.R);
+    if (!bq) return {};
+    return { px: bq.px, name: bq.legs.map(l => l.dealer).join(','), imp: bq.implied };
+  };
+  const evInst = q && q.event ? q.event.inc.inst : null;
+  const tenors = state.R.insts.filter(k => /^\d+y$/.test(k));
+  const spreads = state.R.insts.filter(k => !/^\d+y$/.test(k));
+  return (
+    <div className="screen">
+      <ScreenHead conv={conv} />
+      {tenors.map(k => (
+        <div className="pad" key={k}>
+          <ScreenRow labL="" labR="" mid={xLabel(k)} kind="bar" conv={conv} qid={q ? q.qn : 0}
+                     extra={evInst === k ? 'shocked' : ''}
+                     cols={{ offer: cellQ(k, 'offer'), bid: cellQ(k, 'bid') }} />
+          {spreads.filter(sp => spreadDef(sp).near === k).map(sp => (
+            <ScreenRow key={sp} labL="" labR={'x' + spreadDef(sp).far.replace('y','')} kind="spread"
+                       conv={conv} qid={q ? q.qn : 0} extra={evInst === sp ? 'shocked' : ''}
+                       cols={{ offer: cellQ(sp, 'offer'), bid: cellQ(sp, 'bid') }} />
+          ))}
+        </div>
+      ))}
+      <div className="hint" style={{marginTop:'.4rem'}}>
+        best price per side — ' with comma-names = implied, single name = live interest · board shown before the event
+      </div>
+    </div>
+  );
+}
+
+function BookDrill({ speed, conv, blind, statsRef, onEnd }){
+  const bstage = statsRef.current._bookStage || 1;
+  const historyRef = useRef([]);
+  const [game, setGame] = useState(() => {
+    const st = seedBook(bstage);
+    const q0 = genBookQuestion(bstage, st, statsRef.current, true);
+    q0.qn = 1;
+    return { st: st, q: q0, n: 1 };
+  });
+  const [phase, setPhase] = useState('answer');
+  const [fb, setFb] = useState(null);
+  const [briefed, setBriefed] = useState(!blind);
+  const [remaining, setRemaining] = useState(SPEED_MS);
+  const t0 = useRef(0);
+  const q = game.q;
+  window.__bq = q; window.__bstage = bstage;
+
+  useEffect(() => { t0.current = performance.now(); setRemaining(SPEED_MS); }, [game.n, briefed]);
+
+  const submit = useCallback((idx) => {
+    const ms = Math.round(performance.now() - t0.current);
+    const ok = idx === q.correctIdx;
+    const key = patKey('book', q.qtype, q.outcome, 'S' + bstage);
+    recordResult(statsRef.current, key, ok, ms);
+    historyRef.current.push({ key: key, ok: ok, ms: ms });
+    setFb({ ok: ok, ms: ms, timeout: idx === -1 });
+    setPhase('feedback');
+  }, [q, bstage, statsRef]);
+
+  const next = useCallback(() => {
+    const h = historyRef.current;
+    if (game.n >= QUESTIONS_PER_ROUND){
+      const okN = h.filter(x => x.ok).length;
+      if (okN / h.length >= 0.85 && bstage < 3) statsRef.current._bookStage = bstage + 1;
+      onEnd(h); return;
+    }
+    const st2 = applyBookQuestion(game.st, q);
+    const q2 = genBookQuestion(bstage, st2, statsRef.current, false);
+    q2.qn = game.n + 1;
+    setFb(null); setPhase('answer');
+    setGame({ st: st2, q: q2, n: game.n + 1 });
+  }, [game, q, bstage, statsRef, onEnd]);
+
+  useEffect(() => {
+    if (!speed || phase !== 'answer' || !briefed) return;
+    const iv = setInterval(() => {
+      const left = SPEED_MS - (performance.now() - t0.current);
+      setRemaining(left);
+      if (left <= 0) submit(-1);
+    }, 100);
+    return () => clearInterval(iv);
+  }, [speed, phase, game.n, submit, briefed]);
+
+  useEffect(() => {
+    const h = (e) => {
+      if (e.key === 'Escape'){ e.preventDefault(); onEnd(historyRef.current); return; }
+      if (!briefed){
+        if (e.key === 'n' || e.key === 'N' || e.key === 'Enter'){ e.preventDefault(); setBriefed(true); }
+        return;
+      }
+      if (phase === 'feedback' && (e.key === 'n' || e.key === 'N' || e.key === 'Enter')){
+        e.preventDefault(); next(); return;
+      }
+      if (phase === 'answer' && e.key >= '1' && e.key <= '4'){
+        if (q.options[+e.key - 1] != null){ e.preventDefault(); submit(+e.key - 1); }
+      }
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [phase, next, submit, onEnd, q, briefed]);
+
+  const streak = (() => { let n = 0; const h = historyRef.current;
+    for (let i = h.length-1; i >= 0 && h[i].ok; i--) n++; return n; })();
+
+  return (
+    <div>
+      <div className="hud">
+        <span>LVL <b>6</b></span>
+        <span>STAGE <b>{bstage}</b></span>
+        <span>Q <b>{game.n}/{QUESTIONS_PER_ROUND}</b></span>
+        <span>STREAK <b>{streak}</b></span>
+        <span style={{marginLeft:'auto'}}>
+          <button type="button" className="btn end" onClick={() => onEnd(historyRef.current)}>END ✕</button>
+        </span>
+      </div>
+      {!blind && <BookScreen state={game.st} q={q} conv={conv} />}
+      {blind && !briefed && (
+        <div className="panel">
+          <div className="panel-title">OPENING CALLS · the resting interests — read once</div>
+          {game.st.book.map(i => (
+            <div key={i.id} className="fb-deriv" style={{fontFamily:'var(--mono)'}}>
+              {i.dealer} — {formatPrice(i.px)} {i.side} in <b style={{color:'var(--gold)'}}>{xLabel(i.inst)}</b>
+            </div>
+          ))}
+          <div className="btnrow">
+            <button type="button" className="btn primary" onClick={() => setBriefed(true)}>MEMORISED ▸&nbsp;&nbsp;N</button>
+          </div>
+        </div>
+      )}
+      {blind && briefed && <div className="hint" style={{marginBottom:'.6rem'}}>book hidden — you carry the interests</div>}
+      {briefed && <React.Fragment>
+      <div className="shock">
+        <span className="shock-label">{q.qtype === 'scan' ? 'SCAN' : q.qtype === 'work' ? 'WORK IT' : 'FLOW'}</span>
+        <span className="shock-text">{q.text}</span>
+        {speed && phase === 'answer' && <span className="clock">{Math.max(0, remaining/1000).toFixed(1)}s</span>}
+      </div>
+      {phase === 'answer' ? (
+        <div className="choices">
+          <div className="anshdr">YOUR CALL · press 1–4 or tap</div>
+          {q.options.map((o, i) => (
+            <div key={game.n + '-' + i} className="choice" onClick={() => submit(i)}>
+              <span className="cnum">{i + 1}</span>
+              <span className="mkt" style={{fontSize:'.92rem', whiteSpace:'normal'}}>{o}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className={'fb ' + (fb.ok ? 'ok' : 'bad')}>
+          <div className="fb-line1">
+            <span className="verdict">{fb.ok ? 'CORRECT' : fb.timeout ? 'TIME OUT' : 'WRONG'}</span>
+            <span className="ms">{(fb.ms/1000).toFixed(2)}s</span>
+            <span className="stk">streak {streak}</span>
+          </div>
+          <div className="fb-ans" style={{fontSize:'1.05rem'}}>{q.options[q.correctIdx]}</div>
+          <div className="fb-deriv">{q.deriv}</div>
+          <div className="btnrow">
+            <button type="button" className="btn primary" onClick={next}>NEXT ▸&nbsp;&nbsp;N</button>
+          </div>
+        </div>
+      )}
+      </React.Fragment>}
+    </div>
+  );
+}
+
+const BOOK_ROWS = [
+  { qtype:'scan',  outcome:'scan',    label:'book · scan the gaps' },
+  { qtype:'knock', outcome:'print',   label:'book · print calls' },
+  { qtype:'knock', outcome:'near',    label:'book · workable calls' },
+  { qtype:'knock', outcome:'nothing', label:'book · no-impact calls' },
+  { qtype:'work',  outcome:'work',    label:'book · work it' },
+];
+const BOOK_COLS = [
+  { s:'S1', label:'STAGE 1' }, { s:'S2', label:'STAGE 2' }, { s:'S3', label:'STAGE 3' },
+];
+
 function HeatMap({ stats }){
   const any = Object.keys(stats).some(k => stats[k].n > 0);
   if (!any) return null;
@@ -1611,6 +2106,8 @@ function HeatMap({ stats }){
       <div className="panel-title">PATTERN ACCURACY · cell text: % correct · median seconds</div>
       <HeatTable rows={TRI_ROWS} cols={TRI_COLS} stats={stats}
                  keyOf={(r, c) => patKey('tri', r.role, c.side, c.d)} />
+      <HeatTable rows={BOOK_ROWS} cols={BOOK_COLS} stats={stats}
+                 keyOf={(r, c) => patKey('book', r.qtype, r.outcome, c.s)} />
       <HeatTable rows={HEAT_ROWS} cols={HEAT_COLS} stats={stats}
                  keyOf={(r, c) => patKey(r.t, r.role, c.side, c.dir)} />
       <div className="legend">
@@ -1663,7 +2160,7 @@ function Summary({ history, stats, onRestart, onMenu }){
 function Menu({ speed, conv, inputMode, blind, onStart, onToggleSpeed, onToggleConv, onToggleInput, onToggleBlind, testResult }){
   useEffect(() => {
     const h = (e) => {
-      if (e.key >= '1' && e.key <= '5'){ e.preventDefault(); onStart(+e.key); }
+      if (e.key >= '1' && e.key <= '6'){ e.preventDefault(); onStart(+e.key); }
       if (e.key === 's' || e.key === 'S'){ e.preventDefault(); onToggleSpeed(); }
       if (e.key === 'o' || e.key === 'O'){ e.preventDefault(); onToggleConv(); }
       if (e.key === 't' || e.key === 'T'){ e.preventDefault(); onToggleInput(); }
@@ -1730,6 +2227,9 @@ function App(){
       {phase === 'drill' && (level === 1
         ? <TriangleDrill key={roundId} speed={speed} conv={conv} inputMode={inputMode} blind={blind} statsRef={statsRef}
                          onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
+        : level === 6
+        ? <BookDrill key={roundId} speed={speed} conv={conv} blind={blind} statsRef={statsRef}
+                     onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
         : <Drill key={roundId} level={level} speed={speed} conv={conv} inputMode={inputMode} blind={blind} statsRef={statsRef}
                  onEnd={h => { setLastHistory(h); setPhase('summary'); }} />)}
       {phase === 'summary' &&

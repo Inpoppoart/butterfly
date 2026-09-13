@@ -802,19 +802,27 @@ function bestDirect(book, inst, side){
   });
   return best;
 }
-function bestQuote(book, inst, side, R){
+function quoteCandidates(book, inst, side, R){
+  const out = [];
   const d = bestDirect(book, inst, side);
-  let best = d ? { px: d.px, implied: false, legs: [d] } : null;
+  if (d) out.push({ px: d.px, implied: false, legs: [d], op: null });
   (R.rels[inst+'|'+side] || []).forEach(function(c){
     const l0 = bestDirect(book, c.legs[0][0], c.legs[0][1]);
     const l1 = bestDirect(book, c.legs[1][0], c.legs[1][1]);
     if (!l0 || !l1) return;
-    const px = c.op === 'add' ? l0.px + l1.px : l0.px - l1.px;
-    if (!best || (side === 'bid' ? px > best.px : px < best.px))
-      best = { px: px, implied: true, legs: [l0, l1] };
+    out.push({ px: c.op === 'add' ? l0.px + l1.px : l0.px - l1.px,
+               implied: true, legs: [l0, l1], op: c.op });
+  });
+  return out;
+}
+function bestOf(cands, side){
+  let best = null;
+  cands.forEach(function(c){
+    if (!best || (side === 'bid' ? c.px > best.px : c.px < best.px)) best = c;
   });
   return best;
 }
+function bestQuote(book, inst, side, R){ return bestOf(quoteCandidates(book, inst, side, R), side); }
 function quoteNames(q){ if (!q) return '—'; return q.legs.map(function(l){ return l.dealer; }).join(',') + (q.implied ? "'" : ''); }
 function gapTable(book, R){
   const out = [];
@@ -1008,6 +1016,168 @@ function applyBookQuestion(state, q){
     book = book.concat([inc]);
   }
   return { book: book, R: state.R, nextId: state.nextId };
+}
+
+// ---- LEVEL 7 · THE CALL: a dealer rings, you make the price off the book ----
+// Both scripts reduce to "quote this instrument": an RFQ quotes the resting
+// book, a shown price quotes the book plus that one new interest.
+function twoText(bidPx, offerPx, conv){
+  return conv === 'ob' ? formatPrice(offerPx) + ' / ' + formatPrice(bidPx)
+                       : formatPrice(bidPx) + ' / ' + formatPrice(offerPx);
+}
+function oneText(px, side){ return formatPrice(px) + ' ' + side + ' — nothing the other way'; }
+function sideText(px, side){ return formatPrice(px) + ' ' + side; }
+function legText(q){
+  if (!q) return 'nothing derivable';
+  if (!q.implied) return formatPrice(q.px) + ' live (' + q.legs[0].dealer + ')';
+  const a = q.legs[0], b = q.legs[1];
+  return xLabel(a.inst) + ' ' + a.side + ' ' + formatPrice(a.px) + ' (' + a.dealer + ') ' +
+    (q.op === 'add' ? '+' : '−') + ' ' + xLabel(b.inst) + ' ' + b.side + ' ' + formatPrice(b.px) +
+    ' (' + b.dealer + ') = ' + formatPrice(q.px) + "'";
+}
+function callInsts(book, R){
+  return R.insts.filter(function(i){
+    return bestQuote(book, i, 'bid', R) || bestQuote(book, i, 'offer', R);
+  });
+}
+// wrong levels that each come from a real mistake, never the right one
+function levelTraps(book, inst, side, R, correctPx){
+  const win = bestQuote(book, inst, side, R);
+  const out = [];
+  const push = function(v){
+    if (v == null || v === correctPx || out.indexOf(v) >= 0) return;
+    out.push(v);
+  };
+  if (win && win.implied){
+    const a = win.legs[0], b = win.legs[1];
+    const bAlt = bestDirect(book, b.inst, oppSide(b.side));      // paired the wrong side
+    if (bAlt) push(win.op === 'add' ? a.px + bAlt.px : a.px - bAlt.px);
+    const aAlt = bestDirect(book, a.inst, oppSide(a.side));
+    if (aAlt) push(win.op === 'add' ? aAlt.px + b.px : aAlt.px - b.px);
+    push(win.op === 'add' ? a.px - b.px : b.px - a.px);           // legs the wrong way round
+  }
+  push(correctPx + 2); push(correctPx - 2); push(correctPx + 4); push(correctPx - 4);
+  return out;
+}
+function genRfq(stage, state, conv){
+  const book = state.book, R = state.R;
+  const pool = callInsts(book, R);
+  if (!pool.length) return null;
+  const oneSided = pool.filter(function(i){
+    return !bestQuote(book, i, 'bid', R) || !bestQuote(book, i, 'offer', R);
+  });
+  const implieds = pool.filter(function(i){
+    const b = bestQuote(book, i, 'bid', R), o = bestQuote(book, i, 'offer', R);
+    return (b && b.implied) || (o && o.implied);
+  });
+  const inst = (oneSided.length && Math.random() < 0.35) ? pick(oneSided)
+             : pick(implieds.length ? implieds : pool);
+  const b = bestQuote(book, inst, 'bid', R), o = bestQuote(book, inst, 'offer', R);
+  const dealer = otherDealer('');
+  const traps = [];
+  let correct, subtype;
+  if (b && o){
+    subtype = 'two';
+    correct = twoText(b.px, o.px, conv);
+    const bt = levelTraps(book, inst, 'bid', R, b.px);
+    const ot = levelTraps(book, inst, 'offer', R, o.px);
+    traps.push(twoText(o.px, b.px, conv));                        // sides swapped = crossed
+    if (bt[0] != null) traps.push(twoText(bt[0], o.px, conv));
+    if (ot[0] != null) traps.push(twoText(b.px, ot[0], conv));
+    if (bt[1] != null && ot[1] != null) traps.push(twoText(bt[1], ot[1], conv));
+    traps.push(twoText(b.px + 2, o.px + 2, conv));
+  } else {
+    subtype = 'one';
+    const q = b || o, side = b ? 'bid' : 'offer';
+    correct = oneText(q.px, side);
+    traps.push(oneText(q.px, oppSide(side)));                     // right number, wrong side
+    levelTraps(book, inst, side, R, q.px).slice(0, 3).forEach(function(v){ traps.push(oneText(v, side)); });
+    traps.push(twoText(q.px, q.px + 4, conv));                    // pretending both sides show
+  }
+  const opt = buildOptions(correct, traps);
+  return { script:'rfq', subtype: subtype, inst: inst, inc: null, label:'RFQ',
+           text: dealer + ': where’s ' + xLabel(inst) + '?',
+           ask: 'quote it — both ways if the book lets you',
+           options: opt.options, correctIdx: opt.correctIdx,
+           deriv: 'bid: ' + legText(b) + '   ·   offer: ' + legText(o) };
+}
+function genShow(stage, state, conv){
+  const book = state.book, R = state.R;
+  const spots = [];
+  R.insts.forEach(function(tInst){
+    ['bid','offer'].forEach(function(tSide){
+      (R.rels[tInst+'|'+tSide] || []).forEach(function(c){
+        [0,1].forEach(function(k){
+          const oq = bestDirect(book, c.legs[1-k][0], c.legs[1-k][1]);
+          if (!oq) return;                                        // pairing quote must rest
+          spots.push({ tInst: tInst, tSide: tSide, c: c, k: k, oq: oq,
+                       incInst: c.legs[k][0], incSide: c.legs[k][1],
+                       chain: !/^\d+y$/.test(c.legs[0][0]) && !/^\d+y$/.test(c.legs[1][0]) });
+        });
+      });
+    });
+  });
+  shuffleArr(spots);
+  for (let si = 0; si < spots.length; si++){
+    const sp = spots[si];
+    const before = bestQuote(book, sp.tInst, sp.tSide, R);
+    const margins = shuffleArr([2, 4, 6]);
+    for (let mi = 0; mi < margins.length; mi++){
+      const m = margins[mi];
+      // aim the target somewhere that is genuinely news, then solve the relation
+      // backwards for the price the caller has to show us
+      const T = before ? (sp.tSide === 'bid' ? before.px + m : before.px - m)
+                       : (sp.tSide === 'bid' ? instLevel(sp.tInst) - m : instLevel(sp.tInst) + m);
+      const px = sp.k === 0 ? (sp.c.op === 'add' ? T - sp.oq.px : T + sp.oq.px)
+                            : (sp.c.op === 'add' ? T - sp.oq.px : sp.oq.px - T);
+      if (Math.abs(px - instLevel(sp.incInst)) > 64) continue;     // has to be a sane level
+      const inc = { id: -1 - Math.floor(Math.random()*1e9), dealer: otherDealer(''),
+                    inst: sp.incInst, side: sp.incSide, px: px };
+      if (findCross(book, inc, R)) continue;                       // a print is THE BOOK's question
+      const after = book.concat([inc]);
+      const best = bestQuote(after, sp.tInst, sp.tSide, R);
+      if (!best || best.px !== T) continue;                        // the new price must be the one that shows
+      const correct = sideText(best.px, sp.tSide);
+      const traps = levelTraps(after, sp.tInst, sp.tSide, R, best.px).slice(0, 4)
+        .map(function(v){ return sideText(v, sp.tSide); });
+      traps.push(sideText(best.px, oppSide(sp.tSide)));
+      const opt = buildOptions(correct, traps);
+      return { script:'show', subtype: sp.chain ? 'chain' : 'hop', inst: sp.tInst, inc: inc,
+               label:'SHOW',
+               text: inc.dealer + ': I ' + (inc.side === 'bid' ? 'pay ' : 'receive ') +
+                     formatPrice(inc.px) + ' in ' + xLabel(inc.inst),
+               ask: 'what is your ' + xLabel(sp.tInst) + ' ' + sp.tSide + ' now?',
+               options: opt.options, correctIdx: opt.correctIdx,
+               deriv: legText(best) };
+    }
+  }
+  return null;
+}
+function genCallQuestion(stage, state, stats, conv){
+  const w = ['rfq','show'].map(function(sc){
+    const subs = sc === 'rfq' ? ['two','one'] : ['hop','chain'];
+    return subs.reduce(function(a, sub){ return a + comboWeight(stats, patKey('call', sc, sub, 'S'+stage)); }, 0);
+  });
+  const script = weightedPick(['rfq','show'], w);
+  const first = script === 'rfq' ? genRfq(stage, state, conv) : genShow(stage, state, conv);
+  if (first) return first;
+  return script === 'rfq' ? genShow(stage, state, conv) : genRfq(stage, state, conv);
+}
+// keep the book bounded: at most two interests a side, worst ones drop away
+function trimBook(book){
+  const byKey = {}, keep = {};
+  book.forEach(function(i){ (byKey[i.inst+'|'+i.side] = byKey[i.inst+'|'+i.side] || []).push(i); });
+  Object.keys(byKey).forEach(function(k){
+    const side = k.split('|')[1];
+    byKey[k].slice().sort(function(x, y){ return side === 'bid' ? y.px - x.px : x.px - y.px; })
+      .slice(0, 2).forEach(function(i){ keep[i.id] = 1; });
+  });
+  return book.filter(function(i){ return keep[i.id]; });
+}
+function applyCallQuestion(state, q){
+  if (!q || !q.inc) return state;
+  const inc = { id: state.nextId, dealer: q.inc.dealer, inst: q.inc.inst, side: q.inc.side, px: q.inc.px };
+  return { book: trimBook(state.book.concat([inc])), R: state.R, nextId: state.nextId + 1 };
 }
 
 // ==PURE-END==
@@ -1253,6 +1423,59 @@ function runTests(){
   }
   eq('book fuzz x150 rounds clean', bkBad, 0);
 
+  // LEVEL 7 · THE CALL — the desk example: CITI offers 2Y 142, MS pays 190 1/2 in 5s
+  const CB = [
+    { id:1, dealer:'CITI', inst:'2y', side:'offer', px:2272 },
+    { id:2, dealer:'MS',   inst:'5y', side:'bid',  px:3048 }
+  ];
+  const c25b = bestQuote(CB, '2s5s', 'bid', R2);
+  eq('call: 2x5 bid = 5Y bid - 2Y offer = 48 1/2', [c25b.px, c25b.implied, c25b.op], [776, true, 'sub']);
+  eq('call: 2x5 offer not derivable', bestQuote(CB, '2s5s', 'offer', R2), null);
+  eq('call: one-sided text', oneText(c25b.px, 'bid'), '48.5 bid — nothing the other way');
+  eq('call: side text', sideText(c25b.px, 'bid'), '48.5 bid');
+  eq('call: two-way text respects conv', [twoText(776, 792, 'ob'), twoText(776, 792, 'bo')],
+     ['49.5 / 48.5', '48.5 / 49.5']);
+  eq('call: leg text names both sources',
+     legText(c25b).indexOf('MS') >= 0 && legText(c25b).indexOf('CITI') >= 0, true);
+  // traps are real mistakes, never the right answer
+  const CB2 = CB.concat([{ id:3, dealer:'GS', inst:'2y', side:'bid', px:2264 }]);
+  const tr = levelTraps(CB2, '2s5s', 'bid', R2, 776);
+  eq('call: traps exclude the correct level', tr.indexOf(776), -1);
+  eq('call: same-side-legs trap present (5Y bid - 2Y bid)', tr.indexOf(3048 - 2264) >= 0, true);
+  eq('call: legs-reversed trap present', tr.indexOf(2272 - 3048) >= 0, true);
+  // book stays bounded
+  const many = [];
+  for (let i = 0; i < 6; i++) many.push({ id:100+i, dealer:'X', inst:'5y', side:'bid', px:3000+i*2 });
+  eq('call: trimBook keeps best two a side', trimBook(many).map(function(i){ return i.px; }).sort(),
+     [3008, 3010]);
+  // fuzz: every generated call is answerable and internally consistent
+  let clBad = 0, sawRfq = 0, sawShow = 0, sawChain = 0;
+  for (let t = 0; t < 150; t++){
+    const stg = pick([1,2,3]);
+    let st = seedBook(stg);
+    for (let qn = 0; qn < 8; qn++){
+      const q = genCallQuestion(stg, st, {}, 'ob');
+      if (!q){ clBad++; break; }
+      if (q.script === 'rfq') sawRfq++; else sawShow++;
+      if (q.subtype === 'chain') sawChain++;
+      if (q.options.length !== 4) clBad++;
+      if (q.options[q.correctIdx] == null) clBad++;
+      const sn = {}; q.options.forEach(function(x){ if (sn[x]) clBad++; sn[x] = 1; });
+      if (q.inc){
+        if (findCross(st.book, q.inc, st.R)) clBad++;          // never a print
+        const ans = q.options[q.correctIdx];
+        const sd = ans.indexOf('bid') >= 0 ? 'bid' : 'offer';
+        const re = bestQuote(st.book.concat([q.inc]), q.inst, sd, st.R);
+        if (!re || ans !== sideText(re.px, sd)) clBad++;       // answer re-derives from the book
+      }
+      st = applyCallQuestion(st, q);
+      if (st.book.length > st.R.insts.length * 4) clBad++;      // bounded
+    }
+  }
+  eq('call fuzz x150 rounds clean', clBad, 0);
+  eq('call fuzz saw both scripts', sawRfq > 50 && sawShow > 50, true);
+  eq('call fuzz saw chain targets', sawChain > 0, true);
+
   // DEALER-PAD SCREEN metadata
   eq('xLabel spread market', xLabel('2s5s'), '2x5');
   eq('xLabel outright', xLabel('10y'), '10Y');
@@ -1289,6 +1512,7 @@ const LEVELS = [
   { n:4, nm:'CHAINS',  ds:'implied spread chained from two spread markets' },
   { n:5, nm:'MIXED',   ds:'targets rotate, ~25% distractors — press U when your implied is untouched' },
   { n:6, nm:'THE BOOK', ds:'sparse one-sided interests — spot what prints, what is workable, who to call' },
+  { n:7, nm:'THE CALL', ds:'a dealer rings — quote it off the board before you could ever look it up' },
 ];
 const HEAT_ROWS = [
   { t:'spread', role:'near',     label:'spread · near leg' },
@@ -1921,13 +2145,13 @@ function HeatTable({ rows, cols, stats, keyOf }){
   );
 }
 
-function BookScreen({ state, q, conv }){
+function BookScreen({ state, q, conv, askInst, note }){
   const cellQ = (inst, side) => {
     const bq = bestQuote(state.book, inst, side, state.R);
     if (!bq) return {};
     return { px: bq.px, name: bq.legs.map(l => l.dealer).join(','), imp: bq.implied };
   };
-  const evInst = q && q.event ? q.event.inc.inst : null;
+  const evInst = q ? (q.event ? q.event.inc.inst : null) : null;
   const tenors = state.R.insts.filter(k => /^\d+y$/.test(k));
   const spreads = state.R.insts.filter(k => !/^\d+y$/.test(k));
   return (
@@ -1936,17 +2160,18 @@ function BookScreen({ state, q, conv }){
       {tenors.map(k => (
         <div className="pad" key={k}>
           <ScreenRow labL="" labR="" mid={xLabel(k)} kind="bar" conv={conv} qid={q ? q.qn : 0}
-                     extra={evInst === k ? 'shocked' : ''}
+                     extra={evInst === k ? 'shocked' : ''} target={askInst === k}
                      cols={{ offer: cellQ(k, 'offer'), bid: cellQ(k, 'bid') }} />
           {spreads.filter(sp => spreadDef(sp).near === k).map(sp => (
             <ScreenRow key={sp} labL="" labR={'x' + spreadDef(sp).far.replace('y','')} kind="spread"
                        conv={conv} qid={q ? q.qn : 0} extra={evInst === sp ? 'shocked' : ''}
+                       target={askInst === sp}
                        cols={{ offer: cellQ(sp, 'offer'), bid: cellQ(sp, 'bid') }} />
           ))}
         </div>
       ))}
       <div className="hint" style={{marginTop:'.4rem'}}>
-        best price per side — ' with comma-names = implied, single name = live interest · board shown before the event
+        best price per side — ' with comma-names = implied, single name = live interest · {note || 'board shown before the event'}
       </div>
     </div>
   );
@@ -2087,6 +2312,153 @@ function BookDrill({ speed, conv, blind, statsRef, onEnd }){
   );
 }
 
+function CallDrill({ speed, conv, blind, statsRef, onEnd }){
+  const cstage = statsRef.current._callStage || 1;
+  const historyRef = useRef([]);
+  const [game, setGame] = useState(() => {
+    const st = seedBook(cstage);
+    const q0 = genCallQuestion(cstage, st, statsRef.current, conv);
+    q0.qn = 1;
+    return { st: st, q: q0, n: 1 };
+  });
+  const [phase, setPhase] = useState('answer');
+  const [fb, setFb] = useState(null);
+  const [briefed, setBriefed] = useState(!blind);
+  const [remaining, setRemaining] = useState(SPEED_MS);
+  const t0 = useRef(0);
+  const q = game.q;
+  window.__cq = q; window.__cstage = cstage;
+
+  useEffect(() => { t0.current = performance.now(); setRemaining(SPEED_MS); }, [game.n, briefed]);
+
+  const submit = useCallback((idx) => {
+    const ms = Math.round(performance.now() - t0.current);
+    const ok = idx === q.correctIdx;
+    const key = patKey('call', q.script, q.subtype, 'S' + cstage);
+    recordResult(statsRef.current, key, ok, ms);
+    historyRef.current.push({ key: key, ok: ok, ms: ms });
+    setFb({ ok: ok, ms: ms, timeout: idx === -1 });
+    setPhase('feedback');
+  }, [q, cstage, statsRef]);
+
+  const next = useCallback(() => {
+    const h = historyRef.current;
+    if (game.n >= QUESTIONS_PER_ROUND){
+      const okN = h.filter(x => x.ok).length;
+      if (okN / h.length >= 0.85 && cstage < 3) statsRef.current._callStage = cstage + 1;
+      onEnd(h); return;
+    }
+    const st2 = applyCallQuestion(game.st, q);
+    const q2 = genCallQuestion(cstage, st2, statsRef.current, conv);
+    q2.qn = game.n + 1;
+    setFb(null); setPhase('answer');
+    setGame({ st: st2, q: q2, n: game.n + 1 });
+  }, [game, q, cstage, conv, statsRef, onEnd]);
+
+  useEffect(() => {
+    if (!speed || phase !== 'answer' || !briefed) return;
+    const iv = setInterval(() => {
+      const left = SPEED_MS - (performance.now() - t0.current);
+      setRemaining(left);
+      if (left <= 0) submit(-1);
+    }, 100);
+    return () => clearInterval(iv);
+  }, [speed, phase, game.n, submit, briefed]);
+
+  useEffect(() => {
+    const h = (e) => {
+      if (e.key === 'Escape'){ e.preventDefault(); onEnd(historyRef.current); return; }
+      if (!briefed){
+        if (e.key === 'n' || e.key === 'N' || e.key === 'Enter'){ e.preventDefault(); setBriefed(true); }
+        return;
+      }
+      if (phase === 'feedback' && (e.key === 'n' || e.key === 'N' || e.key === 'Enter')){
+        e.preventDefault(); next(); return;
+      }
+      if (phase === 'answer' && e.key >= '1' && e.key <= '4'){
+        if (q.options[+e.key - 1] != null){ e.preventDefault(); submit(+e.key - 1); }
+      }
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [phase, next, submit, onEnd, q, briefed]);
+
+  const streak = (() => { let n = 0; const h = historyRef.current;
+    for (let i = h.length-1; i >= 0 && h[i].ok; i--) n++; return n; })();
+
+  return (
+    <div>
+      <div className="hud">
+        <span>LVL <b>7</b></span>
+        <span>STAGE <b>{cstage}</b></span>
+        <span>Q <b>{game.n}/{QUESTIONS_PER_ROUND}</b></span>
+        <span>STREAK <b>{streak}</b></span>
+        <span style={{marginLeft:'auto'}}>
+          <button type="button" className="btn end" onClick={() => onEnd(historyRef.current)}>END ✕</button>
+        </span>
+      </div>
+      {!blind && <BookScreen state={game.st} q={q} conv={conv} askInst={q.inst}
+                             note="the call is not on the board — that is the point" />}
+      {blind && !briefed && (
+        <div className="panel">
+          <div className="panel-title">OPENING CALLS · the resting interests — read once</div>
+          {game.st.book.map(i => (
+            <div key={i.id} className="fb-deriv" style={{fontFamily:'var(--mono)'}}>
+              {i.dealer} — {formatPrice(i.px)} {i.side} in <b style={{color:'var(--gold)'}}>{xLabel(i.inst)}</b>
+            </div>
+          ))}
+          <div className="btnrow">
+            <button type="button" className="btn primary" onClick={() => setBriefed(true)}>MEMORISED ▸&nbsp;&nbsp;N</button>
+          </div>
+        </div>
+      )}
+      {blind && briefed && <div className="hint" style={{marginBottom:'.6rem'}}>board hidden — quote it from memory</div>}
+      {briefed && <React.Fragment>
+      <div className="shock">
+        <span className="shock-label">{q.label}</span>
+        <span className="shock-text">{q.text}</span>
+        {speed && phase === 'answer' && <span className="clock">{Math.max(0, remaining/1000).toFixed(1)}s</span>}
+      </div>
+      <div className="task">
+        <span className="task-label">QUOTE IT</span>
+        <span className="task-text">{q.ask}</span>
+      </div>
+      {phase === 'answer' ? (
+        <div className="choices">
+          <div className="anshdr">YOUR PRICE · press 1–4 or tap{q.subtype === 'two' ? ' · ' + (conv === 'ob' ? 'offer / bid' : 'bid / offer') : ''}</div>
+          {q.options.map((o, i) => (
+            <div key={game.n + '-' + i} className="choice" onClick={() => submit(i)}>
+              <span className="cnum">{i + 1}</span>
+              <span className="mkt" style={{fontSize:'.98rem', whiteSpace:'normal'}}>{o}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className={'fb ' + (fb.ok ? 'ok' : 'bad')}>
+          <div className="fb-line1">
+            <span className="verdict">{fb.ok ? 'CORRECT' : fb.timeout ? 'TIME OUT' : 'WRONG'}</span>
+            <span className="ms">{(fb.ms/1000).toFixed(2)}s</span>
+            <span className="stk">streak {streak}</span>
+          </div>
+          <div className="fb-ans" style={{fontSize:'1.05rem'}}>{q.options[q.correctIdx]}</div>
+          <div className="fb-deriv">{q.deriv}</div>
+          <div className="btnrow">
+            <button type="button" className="btn primary" onClick={next}>NEXT ▸&nbsp;&nbsp;N</button>
+          </div>
+        </div>
+      )}
+      </React.Fragment>}
+    </div>
+  );
+}
+
+const CALL_ROWS = [
+  { script:'rfq',  subtype:'two',   label:'call · quote both ways' },
+  { script:'rfq',  subtype:'one',   label:'call · only one side shows' },
+  { script:'show', subtype:'hop',   label:'call · price shown, one hop' },
+  { script:'show', subtype:'chain', label:'call · price shown, chain' },
+];
+
 const BOOK_ROWS = [
   { qtype:'scan',  outcome:'scan',    label:'book · scan the gaps' },
   { qtype:'knock', outcome:'print',   label:'book · print calls' },
@@ -2108,6 +2480,8 @@ function HeatMap({ stats }){
                  keyOf={(r, c) => patKey('tri', r.role, c.side, c.d)} />
       <HeatTable rows={BOOK_ROWS} cols={BOOK_COLS} stats={stats}
                  keyOf={(r, c) => patKey('book', r.qtype, r.outcome, c.s)} />
+      <HeatTable rows={CALL_ROWS} cols={BOOK_COLS} stats={stats}
+                 keyOf={(r, c) => patKey('call', r.script, r.subtype, c.s)} />
       <HeatTable rows={HEAT_ROWS} cols={HEAT_COLS} stats={stats}
                  keyOf={(r, c) => patKey(r.t, r.role, c.side, c.dir)} />
       <div className="legend">
@@ -2160,7 +2534,7 @@ function Summary({ history, stats, onRestart, onMenu }){
 function Menu({ speed, conv, inputMode, blind, onStart, onToggleSpeed, onToggleConv, onToggleInput, onToggleBlind, testResult }){
   useEffect(() => {
     const h = (e) => {
-      if (e.key >= '1' && e.key <= '6'){ e.preventDefault(); onStart(+e.key); }
+      if (e.key >= '1' && e.key <= '7'){ e.preventDefault(); onStart(+e.key); }
       if (e.key === 's' || e.key === 'S'){ e.preventDefault(); onToggleSpeed(); }
       if (e.key === 'o' || e.key === 'O'){ e.preventDefault(); onToggleConv(); }
       if (e.key === 't' || e.key === 'T'){ e.preventDefault(); onToggleInput(); }
@@ -2229,6 +2603,9 @@ function App(){
                          onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
         : level === 6
         ? <BookDrill key={roundId} speed={speed} conv={conv} blind={blind} statsRef={statsRef}
+                     onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
+        : level === 7
+        ? <CallDrill key={roundId} speed={speed} conv={conv} blind={blind} statsRef={statsRef}
                      onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
         : <Drill key={roundId} level={level} speed={speed} conv={conv} inputMode={inputMode} blind={blind} statsRef={statsRef}
                  onEnd={h => { setLastHistory(h); setPhase('summary'); }} />)}

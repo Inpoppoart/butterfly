@@ -23,6 +23,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Build — precompile JSX, inline React, stamp the service worker
+        run: |
+          npm ci
+          node build.mjs implied-shift.html
+
+      - name: Keep build tooling out of the published site
+        run: rm -rf node_modules package.json package-lock.json build.mjs build
+
       - name: Enable GitHub Pages
         run: |
           curl -s -X POST \

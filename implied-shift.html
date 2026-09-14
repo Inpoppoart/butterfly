@@ -5,9 +5,17 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#05060a">
 <title>SHIFT — Implied Price Shift Trainer</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SHIFT">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- fonts must never hold up the board: load async, fall back to the system stack -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap"></noscript>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -82,6 +90,8 @@ body{background:radial-gradient(1200px 600px at 50% -10%,#0e1d38 0%,transparent 
 .task-was{color:var(--muted);font-weight:400;font-size:.8rem;margin-left:.4rem;white-space:nowrap}
 .mkt-sm{font-family:var(--mono);font-size:.85rem;font-weight:600}
 .anshdr{font-family:var(--mono);font-size:.62rem;letter-spacing:.18em;color:var(--cyan)}
+.opt.career{color:var(--cyan);opacity:.85}
+.optbtn.reset{opacity:.7}
 .slab{font-family:var(--mono);font-weight:700;font-size:.72rem;color:#5bd1ff;white-space:nowrap}
 .slab.r{text-align:right}
 .slab .tgt{color:var(--gold);font-size:.48rem;letter-spacing:.1em;border:1px solid rgba(255,210,63,.5);border-radius:4px;padding:0 .18rem;margin-left:.2rem}
@@ -1180,6 +1190,46 @@ function applyCallQuestion(state, q){
   return { book: trimBook(state.book.concat([inc])), R: state.R, nextId: state.nextId + 1 };
 }
 
+// ---- progress that survives closing the tab ----
+// Storage is versioned and every access is guarded: a private window, blocked
+// site data or a hostile shim must degrade to "no history", never to a crash.
+var STORE_KEY = 'shift.v1';
+function safeStore(){
+  try { return (typeof localStorage !== 'undefined' && localStorage) ? localStorage : null; }
+  catch (e){ return null; }
+}
+function loadState(store){
+  try {
+    const raw = store && store.getItem(STORE_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    if (!o || o.v !== 1 || !o.stats || typeof o.stats !== 'object') return null;
+    return { stats: o.stats,
+             settings: (o.settings && typeof o.settings === 'object') ? o.settings : {} };
+  } catch (e){ return null; }
+}
+function saveState(store, stats, settings){
+  try {
+    if (!store) return false;
+    store.setItem(STORE_KEY, JSON.stringify({ v:1, stats: stats, settings: settings, updatedAt: Date.now() }));
+    return true;
+  } catch (e){ return false; }
+}
+function clearState(store){
+  try { if (!store) return false; store.removeItem(STORE_KEY); return true; }
+  catch (e){ return false; }
+}
+// lifetime answers; the _bookStage/_callStage markers live in the same object
+// and are plain numbers, so they must not be counted as pattern buckets
+function careerCount(stats){
+  let n = 0;
+  Object.keys(stats || {}).forEach(function(k){
+    const b = stats[k];
+    if (b && typeof b.n === 'number') n += b.n;
+  });
+  return n;
+}
+
 // ==PURE-END==
 
 // ==TESTS-BEGIN==
@@ -1475,6 +1525,37 @@ function runTests(){
   eq('call fuzz x150 rounds clean', clBad, 0);
   eq('call fuzz saw both scripts', sawRfq > 50 && sawShow > 50, true);
   eq('call fuzz saw chain targets', sawChain > 0, true);
+
+  // PROGRESS PERSISTENCE
+  const fakeStore = (function(){
+    const m = {};
+    return { getItem: function(k){ return Object.prototype.hasOwnProperty.call(m, k) ? m[k] : null; },
+             setItem: function(k, v){ m[k] = String(v); },
+             removeItem: function(k){ delete m[k]; } };
+  })();
+  eq('store: empty loads null', loadState(fakeStore), null);
+  eq('store: save reports success',
+     saveState(fakeStore, { 'book|scan|scan|S1': { n:3, ok:2, times:[100,200,300] }, _bookStage: 2 },
+               { speed:true, conv:'bo' }), true);
+  const back = loadState(fakeStore);
+  eq('store: stats round-trip', back.stats['book|scan|scan|S1'].n, 3);
+  eq('store: stage round-trip', back.stats._bookStage, 2);
+  eq('store: settings round-trip', [back.settings.speed, back.settings.conv], [true, 'bo']);
+  eq('store: career counts answers, not stage markers', careerCount(back.stats), 3);
+  eq('store: career of empty is 0', careerCount({}), 0);
+  eq('store: clear wipes', [clearState(fakeStore), loadState(fakeStore)], [true, null]);
+  // nothing about storage may ever throw
+  const hostileStore = { getItem: function(){ throw new Error('blocked'); },
+                         setItem: function(){ throw new Error('blocked'); },
+                         removeItem: function(){ throw new Error('blocked'); } };
+  eq('store: hostile storage reads null', loadState(hostileStore), null);
+  eq('store: hostile storage save is false', saveState(hostileStore, {}, {}), false);
+  eq('store: absent storage is safe', [loadState(null), saveState(null, {}, {}), clearState(null)],
+     [null, false, false]);
+  fakeStore.setItem(STORE_KEY, 'not json at all');
+  eq('store: garbage ignored', loadState(fakeStore), null);
+  fakeStore.setItem(STORE_KEY, JSON.stringify({ v: 99, stats: {} }));
+  eq('store: future version ignored', loadState(fakeStore), null);
 
   // DEALER-PAD SCREEN metadata
   eq('xLabel spread market', xLabel('2s5s'), '2x5');
@@ -2531,7 +2612,9 @@ function Summary({ history, stats, onRestart, onMenu }){
   );
 }
 
-function Menu({ speed, conv, inputMode, blind, onStart, onToggleSpeed, onToggleConv, onToggleInput, onToggleBlind, testResult }){
+function Menu({ speed, conv, inputMode, blind, onStart, onToggleSpeed, onToggleConv, onToggleInput,
+                onToggleBlind, testResult, career, storeOk, onReset, bookStage, callStage }){
+  const [armed, setArmed] = useState(false);               // wipe needs two taps, never a dialog
   useEffect(() => {
     const h = (e) => {
       if (e.key >= '1' && e.key <= '7'){ e.preventDefault(); onStart(+e.key); }
@@ -2559,6 +2642,16 @@ function Menu({ speed, conv, inputMode, blind, onStart, onToggleSpeed, onToggleC
           <span className="optbtn" onClick={onToggleConv}><b>O</b> quotes: {conv === 'ob' ? 'OFFER / BID' : 'BID / OFFER'}</span>
           <span className="optbtn" onClick={onToggleInput}><b>T</b> answers: {inputMode === 'keys' ? '1–4 CHOICES' : 'TYPED'}</span>
           <span className="optbtn" onClick={onToggleBlind}><b>V</b> prices: {blind ? 'IN YOUR HEAD' : 'ON SCREEN'}</span>
+          <span className="optbtn reset" onClick={() => { if (armed){ onReset(); setArmed(false); } else setArmed(true); }}>
+            {armed ? 'TAP AGAIN TO WIPE' : 'reset progress'}</span>
+        </div>
+        <div className="opt career">
+          {storeOk
+            ? (career > 0
+                ? 'career: ' + career.toLocaleString() + ' answered · BOOK stage ' + bookStage +
+                  ' · CALL stage ' + callStage + ' · saved on this device'
+                : 'career: nothing saved yet — your heat-map, weak patterns and stages carry over from here')
+            : 'this browser is blocking storage — progress will not carry over between sessions'}
         </div>
         <div className="opt">columns as on the desk grid: RECV (offer side, higher) · INST · PAY (bid side, lower) · prices marked ' are implieds, unmarked are live quotes · improve = tighter</div>
         <div className="opt">V mode: opening calls are read once, then the board disappears — every change is announced and you carry the prices</div>
@@ -2570,21 +2663,39 @@ function Menu({ speed, conv, inputMode, blind, onStart, onToggleSpeed, onToggleC
 }
 
 function App(){
+  const [boot] = useState(() => loadState(safeStore()) || { stats: {}, settings: {} });
   const [phase, setPhase] = useState('menu');
   const [level, setLevel] = useState(1);
-  const [speed, setSpeed] = useState(false);
-  const [conv, setConv] = useState('ob');                  // offer/bid, per desk convention
-  const [inputMode, setInputMode] = useState('keys');      // one-keypress answers by default
-  const [blind, setBlind] = useState(false);               // prices announced once, then held in your head
+  const [speed, setSpeed] = useState(() => !!boot.settings.speed);
+  const [conv, setConv] = useState(() => boot.settings.conv === 'bo' ? 'bo' : 'ob');
+  const [inputMode, setInputMode] = useState(() => boot.settings.inputMode === 'typed' ? 'typed' : 'keys');
+  const [blind, setBlind] = useState(() => !!boot.settings.blind);
   const [roundId, setRoundId] = useState(1);
   const [lastHistory, setLastHistory] = useState([]);
-  const statsRef = useRef({});                             // session-only, no persistence
+  const [statsVersion, setStatsVersion] = useState(0);     // stats live in a ref; bump to redraw
+  const statsRef = useRef(boot.stats);                     // heat-map, adaptive weights, stages
+  const storeOk = !!safeStore();
   const [testResult] = useState(() => {
     const r = runTests();
     if (r.failed.length) console.error('SHIFT self-tests failed:', r.failed);
     window.__TESTS = r;
     return r;
   });
+  const persist = useCallback(() => {
+    saveState(safeStore(), statsRef.current, { speed: speed, conv: conv, inputMode: inputMode, blind: blind });
+  }, [speed, conv, inputMode, blind]);
+  useEffect(() => { persist(); }, [persist]);              // settings changes save immediately
+  const endRound = useCallback(h => {
+    setLastHistory(h); setPhase('summary');
+    setStatsVersion(v => v + 1);
+    persist();                                             // a finished round is never lost
+  }, [persist]);
+  const resetProgress = useCallback(() => {
+    clearState(safeStore());
+    statsRef.current = {};
+    setStatsVersion(v => v + 1);
+  }, []);
+  window.__career = careerCount(statsRef.current);
   return (
     <div className="app">
       <div className="hdr">
@@ -2593,6 +2704,8 @@ function App(){
       </div>
       {phase === 'menu' &&
         <Menu speed={speed} conv={conv} inputMode={inputMode} blind={blind} testResult={testResult}
+              career={careerCount(statsRef.current)} storeOk={storeOk} onReset={resetProgress}
+              bookStage={statsRef.current._bookStage || 1} callStage={statsRef.current._callStage || 1}
               onStart={l => { setLevel(l); setRoundId(r => r+1); setPhase('drill'); }}
               onToggleSpeed={() => setSpeed(s => !s)}
               onToggleConv={() => setConv(c => c === 'ob' ? 'bo' : 'ob')}
@@ -2600,15 +2713,15 @@ function App(){
               onToggleBlind={() => setBlind(b => !b)} />}
       {phase === 'drill' && (level === 1
         ? <TriangleDrill key={roundId} speed={speed} conv={conv} inputMode={inputMode} blind={blind} statsRef={statsRef}
-                         onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
+                         onEnd={endRound} />
         : level === 6
         ? <BookDrill key={roundId} speed={speed} conv={conv} blind={blind} statsRef={statsRef}
-                     onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
+                     onEnd={endRound} />
         : level === 7
         ? <CallDrill key={roundId} speed={speed} conv={conv} blind={blind} statsRef={statsRef}
-                     onEnd={h => { setLastHistory(h); setPhase('summary'); }} />
+                     onEnd={endRound} />
         : <Drill key={roundId} level={level} speed={speed} conv={conv} inputMode={inputMode} blind={blind} statsRef={statsRef}
-                 onEnd={h => { setLastHistory(h); setPhase('summary'); }} />)}
+                 onEnd={endRound} />)}
       {phase === 'summary' &&
         <Summary history={lastHistory} stats={statsRef.current}
                  onRestart={() => { setRoundId(r => r+1); setPhase('drill'); }}
@@ -2627,6 +2740,9 @@ window.addEventListener('load', function(){
       document.getElementById('root').innerHTML =
         '<div class="loadfail">Could not load React/Babel from the CDN — check your connection and reload.</div>';
   }, 1500);
+  // offline shell, so the trainer opens on a platform with no signal
+  if ('serviceWorker' in navigator)
+    navigator.serviceWorker.register('sw.js').catch(function(){});
 });
 </script>
 </body>

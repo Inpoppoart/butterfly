@@ -376,18 +376,22 @@ function genCombo(stageNo, mode, opts){
     if (!ds.length) continue;
     const targetSide = pick(['bid','offer']);
 
-    // drill: one side throughout — shown quotes and the answer all on that side.
-    // strict: sides are whatever the identity demands, so the answer is provable.
-    const sides = mode === 'drill' ? [targetSide, targetSide]
-                                   : reqSides(pick(ds).coefs, targetSide);
+    // The one-sided drill convention is sanctioned only for spread/fly
+    // arithmetic (rulebook section 4). Anything involving an outright is
+    // section 3A and is ALWAYS strict: a 4x6 bid is 6y bid − 4y offer, and
+    // 6y bid − 4y bid is not a 4x6 bid in any sense.
+    const outrightInvolved = A.kind === 'o' || B.kind === 'o';
+    const oneSided = mode === 'drill' && !outrightInvolved;
+    const sides = oneSided ? [targetSide, targetSide]
+                           : reqSides(pick(ds).coefs, targetSide);
 
     const quotes = [quoteOf(A, sides[0], px8), quoteOf(B, sides[1], px8)];
     let items = whatCanYouMake(quotes, targetSide, st.coefs);
-    if (mode === 'strict') items = items.filter(function(r){ return r.exact; });
+    if (!oneSided) items = items.filter(function(r){ return r.exact; });
     if (!items.length || items.length > 2) continue;
     if (opts && opts.wantTwo && items.length < 2) continue;
     items.sort(function(x,y){ return instLabel(x.target).localeCompare(instLabel(y.target)); });
-    return { stage: stageNo, mode: mode, quotes: quotes, items: items,
+    return { stage: stageNo, mode: mode, oneSided: oneSided, quotes: quotes, items: items,
              targetSide: targetSide, tenors: t,
              family: famOf(quotes, items) };
   }
@@ -614,6 +618,17 @@ function runTests(){
      [['bid','offer'], ['offer','bid']]);
   eq('reqSides halving', reqSides([0.5,-0.5],'offer'), ['offer','bid']);
 
+  // the case that was wrong on the desk: 4x6 bid is 6y bid − 4y OFFER
+  const q46 = whatCanYouMake([{inst:mkO(IX['4y']),side:'offer',px8:E(214.25)},
+                              {inst:mkO(IX['6y']),side:'bid',px8:E(234.375)}],'bid')
+    .filter(function(r){ return instLabel(r.target) === '4x6'; })[0];
+  eq('4x6 bid = 6y bid − 4y offer, exact', [fmt(q46.px8), q46.exact, q46.need],
+     ['20.125', true, ['offer','bid']]);
+  eq('two bids never imply a spread bid',
+     whatCanYouMake([{inst:mkO(IX['4y']),side:'bid',px8:E(212.5)},
+                     {inst:mkO(IX['6y']),side:'bid',px8:E(234.375)}],'bid')
+       .filter(function(r){ return instLabel(r.target) === '4x6' && r.exact; }).length, 0);
+
   // generator: every answer re-derives, options are sound, modes behave
   let bad = 0, made = 0;
   for (let s = 1; s <= 3; s++){
@@ -631,8 +646,13 @@ function runTests(){
         if (need.every(function(sd,k){ return sd === q.quotes[k].side; }) !== r.exact) bad++;
       });
       if (mode === 'strict' && !q.items.every(function(r){ return r.exact; })) bad++;
-      if (mode === 'drill' && q.quotes[0].side !== q.quotes[1].side) bad++;
-      if (mode === 'drill' && q.items.some(function(r){ return r.side !== q.quotes[0].side; })) bad++;
+      // an outright anywhere in the sources means strict sides, always
+      const hasO = q.quotes.some(function(z){ return z.inst.kind === 'o'; });
+      if (hasO && !q.items.every(function(r){ return r.exact; })) bad++;
+      if (!q.oneSided && !q.items.every(function(r){ return r.exact; })) bad++;
+      if (q.oneSided && hasO) bad++;
+      if (q.oneSided && q.quotes[0].side !== q.quotes[1].side) bad++;
+      if (q.oneSided && q.items.some(function(r){ return r.side !== q.quotes[0].side; })) bad++;
       [true,false].forEach(function(wl){
         ['bo','gt'].forEach(function(vc){
           const c = comboChoices(q, wl, vc);

@@ -244,6 +244,13 @@ function wvec(inst){
   else { add(inst.t[0], -1); add(inst.t[1], 2); add(inst.t[2], -1); }
   return w;
 }
+// weight-sum: 1 for an outright, 0 for every spread and fly. Combinations of
+// zero-sum instruments stay zero-sum, which is why structures can never make
+// an outright.
+function wsum(inst){
+  const w = wvec(inst);
+  return Object.keys(w).reduce(function(a, k){ return a + w[k]; }, 0);
+}
 function instLabel(inst){
   if (inst.kind === 'o') return CURVE[inst.t[0]].k;
   return inst.t.map(function(i){ return CURVE[i].lbl; }).join('x');
@@ -322,8 +329,20 @@ function whatCanYouMake(quotes, targetSide, allowed){
 }
 
 // ---- quotes on the board ----
+// A curve moves nearly in parallel. Shocking each tenor on its own is what
+// wrecks the relative values: a spread becomes the difference of two shocks
+// and a fly of three, so a 7x8x9 that truly sits at -0.625 would print at
+// -2.25. The session move is therefore level + slope + a token wobble, which
+// moves outrights a lot, spreads a little and flies barely at all.
 function driftCurve(){
-  return BASE8.map(function(p){ return p + ri(-6, 6) * 2; });   // a couple of ticks either way
+  const level8 = ri(-16, 16) * 2;        // parallel shift: +/-4bp, the big move
+  const slope8 = ri(-8, 8);              // total tilt across the curve: +/-1bp
+  const n = BASE8.length - 1;
+  return BASE8.map(function(p, i){
+    return p + level8                    // every tenor moves together
+             + Math.round(slope8 * i / n)// graded, so spreads move only a little
+             + ri(-1, 1);                // 1/8 of idiosyncratic wobble, no more
+  });
 }
 function instWidth(inst){ return inst.kind === 'o' ? 4 : 2; }   // 0.5 on outrights, 0.25 on structures
 function quoteOf(inst, side, px8){
@@ -397,6 +416,12 @@ function genCombo(stageNo, mode, opts){
     const quotes = [quoteOf(srcs[0], sides[0], px8), quoteOf(srcs[1], sides[1], px8)];
     let items = whatCanYouMake(quotes, targetSide, st.coefs);
     if (!oneSided) items = items.filter(function(r){ return r.exact; });
+    // rulebook section 4 sanctions 1:1 (4A-4C) and halving (4D) only. A doubled
+    // leg is a strict pattern - it is where 1x18mx2 = 1x2 - 2x(18mx2) lives,
+    // mixed-sided and exact - so it has no place in one-sided arithmetic.
+    if (oneSided) items = items.filter(function(r){
+      return r.coefs.every(function(c){ return Math.abs(c) === 1 || Math.abs(c) === 0.5; });
+    });
     if (!items.length || items.length > 2) continue;
     if (opts && opts.wantTwo && items.length < 2) continue;
     items.sort(function(x,y){ return instLabel(x.target).localeCompare(instLabel(y.target)); });
@@ -455,7 +480,15 @@ function comboChoices(q, withLevel, vocab){
   const pool = poolOn(q.tenors);
   const have = {}; items.forEach(function(r){ have[instKey(r.target)] = 1; });
   q.quotes.forEach(function(qq){ have[instKey(qq.inst)] = 1; });
-  const others = pool.s.concat(pool.f).concat(pool.o).filter(function(x){ return !have[instKey(x)]; });
+  // Only offer instruments these quotes could conceivably name. Spreads and
+  // flies have weight-sum 0 and outrights 1, so no combination of structures
+  // can ever reach an outright — offering one is not a trap, it is a category
+  // error a broker discards without doing any arithmetic.
+  const reach = q.quotes.reduce(function(a, z){ return a + wsum(z.inst); }, 0) === 0 ? 0 : null;
+  const others = pool.s.concat(pool.f).concat(pool.o).filter(function(x){
+    if (have[instKey(x)]) return false;
+    return reach === 0 ? wsum(x) === 0 : true;
+  });
   shuffleArr(others).slice(0, 3).forEach(function(o){
     // a real instrument on these tenors that these two quotes do NOT make
     traps.push(ansText([{ target:o, side:items[0].side, px8: items[0].px8, coefs:[] }].concat(items.slice(1)), withLevel, vocab));
@@ -637,6 +670,54 @@ function runTests(){
      whatCanYouMake([{inst:mkO(IX['4y']),side:'bid',px8:E(212.5)},
                      {inst:mkO(IX['6y']),side:'bid',px8:E(234.375)}],'bid')
        .filter(function(r){ return instLabel(r.target) === '4x6' && r.exact; }).length, 0);
+
+  // --- guards for the three defects that shipped ---
+  // (1) the board must be a market: a curve moves in parallel, so spreads move
+  // a little and flies barely. Independent per-tenor drift printed a 7x8x9 at
+  // -2.25 when it truly sits at -0.625.
+  let flyOff = 0, sprOff = 0, lvlMoves = false;
+  for (let d = 0; d < 400; d++){
+    const px = driftCurve();
+    [[7,8,9],[2,3,4],[0,1,2],[5,7,9]].forEach(function(t){
+      const f = mkF(t[0],t[1],t[2]);
+      flyOff = Math.max(flyOff, Math.abs(instValue(f,px) - instValue(f,BASE8))/8);
+    });
+    [[7,8],[2,3],[5,10],[0,2]].forEach(function(t){
+      const sp = mkS(t[0],t[1]);
+      sprOff = Math.max(sprOff, Math.abs(instValue(sp,px) - instValue(sp,BASE8))/8);
+    });
+    if (Math.abs(instValue(mkO(7),px) - instValue(mkO(7),BASE8))/8 > 1) lvlMoves = true;
+  }
+  eq('board: flies stay within 1bp of the curve', flyOff <= 1, true);
+  eq('board: spreads stay within 1.5bp of the curve', sprOff <= 1.5, true);
+  eq('board: outrights still move on the level', lvlMoves, true);
+
+  // (2) structures are zero-sum, so they can never name an outright
+  eq('weight sums', [wsum(mkO(3)), wsum(mkS(2,3)), wsum(mkF(2,3,4))], [1, 0, 0]);
+  let unreachable = 0, dblInDrill = 0, gen = 0;
+  for (let s3 = 1; s3 <= 3; s3++){
+    for (let i3 = 0; i3 < 60; i3++){
+      const q3 = genCombo(s3, Math.random() < 0.5 ? 'strict' : 'drill');
+      if (!q3) continue;
+      gen++;
+      if (q3.quotes.every(function(z){ return z.inst.kind !== 'o'; })){
+        const opts3 = comboChoices(q3, false, 'bo').options;
+        if (opts3.some(function(o){ return /\b\d+y\b/.test(o); })) unreachable++;
+      }
+      // (3) one-sided arithmetic is 1:1 and halving only - no doubled leg
+      if (q3.oneSided && q3.items.some(function(r){
+            return r.coefs.some(function(c){ return Math.abs(c) === 2; }); })) dblInDrill++;
+    }
+  }
+  eq('no option names an instrument these quotes cannot reach', unreachable, 0);
+  eq('one-sided answers never use a doubled leg', dblInDrill, 0);
+  eq('guards actually ran against generated questions', gen >= 150, true);
+  // the doubled leg must survive where it belongs: strict, mixed-sided
+  eq('1x18mx2 bid off 1x2 bid and 18mx2 offer is still exact',
+     whatCanYouMake([{inst:mkS(IX['1y'],IX['2y']),side:'bid',px8:E(23.5)},
+                     {inst:mkS(IX['18m'],IX['2y']),side:'offer',px8:E(9.875)}],'bid')
+       .filter(function(r){ return instLabel(r.target) === '1x18mx2' && r.exact; })
+       .map(function(r){ return fmt(r.px8); }), ['3.75']);
 
   // generator: every answer re-derives, options are sound, modes behave
   let bad = 0, made = 0;

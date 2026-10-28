@@ -372,7 +372,16 @@ function genCombo(stageNo, mode, opts){
     const kinds = pick(st.pairs);
     const A = pick(pool[kinds[0]]), B = pick(pool[kinds[1]]);
     if (instKey(A) === instKey(B)) continue;
-    const ds = derivations([A, B], st.coefs);
+    // the board runs down the curve: shortest tenor on top, longest underneath
+    const KIND_ORD = { o:0, s:1, f:2 };
+    const srcs = [A, B].sort(function(x, y){
+      const xa = Math.min.apply(null, x.t), ya = Math.min.apply(null, y.t);
+      if (xa !== ya) return xa - ya;
+      const xb = Math.max.apply(null, x.t), yb = Math.max.apply(null, y.t);
+      if (xb !== yb) return xb - yb;
+      return KIND_ORD[x.kind] - KIND_ORD[y.kind];
+    });
+    const ds = derivations(srcs, st.coefs);
     if (!ds.length) continue;
     const targetSide = pick(['bid','offer']);
 
@@ -380,12 +389,12 @@ function genCombo(stageNo, mode, opts){
     // arithmetic (rulebook section 4). Anything involving an outright is
     // section 3A and is ALWAYS strict: a 4x6 bid is 6y bid − 4y offer, and
     // 6y bid − 4y bid is not a 4x6 bid in any sense.
-    const outrightInvolved = A.kind === 'o' || B.kind === 'o';
+    const outrightInvolved = srcs[0].kind === 'o' || srcs[1].kind === 'o';
     const oneSided = mode === 'drill' && !outrightInvolved;
     const sides = oneSided ? [targetSide, targetSide]
                            : reqSides(pick(ds).coefs, targetSide);
 
-    const quotes = [quoteOf(A, sides[0], px8), quoteOf(B, sides[1], px8)];
+    const quotes = [quoteOf(srcs[0], sides[0], px8), quoteOf(srcs[1], sides[1], px8)];
     let items = whatCanYouMake(quotes, targetSide, st.coefs);
     if (!oneSided) items = items.filter(function(r){ return r.exact; });
     if (!items.length || items.length > 2) continue;
@@ -932,11 +941,14 @@ function ComboDrill({ stage, speed, blind, mode, vocab, statsRef, onEnd }){
           <div className="fb-ans" style={{fontSize:'1.05rem'}}>{q.choices.options[q.choices.correctIdx]}</div>
           {q.combo.items.map((r, i) => (
             <div className="fb-deriv" key={i}>
-              {instLabel(r.target)} {sideWord(r.side, vocab)} = {r.coefs.map((c, k) =>
-                (k ? (c < 0 ? ' − ' : ' + ') : (c < 0 ? '−' : '')) +
-                (Math.abs(c) === 1 ? '' : Math.abs(c) === 0.5 ? '½×' : Math.abs(c) + '×') +
-                instLabel(q.combo.quotes[k].inst) + ' ' + sideWord(q.combo.quotes[k].side, vocab)
-              ).join('')} = {fmt(r.px8)}
+              {instLabel(r.target)} {sideWord(r.side, vocab)} = {r.coefs
+                .map(function(c, k){ return { c: c, k: k }; })
+                .sort(function(x, y){ return (y.c > 0) - (x.c > 0); })   // "8y offer − 7y bid", never "−7y bid + 8y offer"
+                .map(function(e, i){
+                  return (i ? (e.c < 0 ? ' − ' : ' + ') : (e.c < 0 ? '−' : '')) +
+                    (Math.abs(e.c) === 1 ? '' : Math.abs(e.c) === 0.5 ? '½×' : Math.abs(e.c) + '×') +
+                    instLabel(q.combo.quotes[e.k].inst) + ' ' + sideWord(q.combo.quotes[e.k].side, vocab);
+                }).join('')} = {fmt(r.px8)}
               <b style={{color: r.exact ? 'var(--green)' : 'var(--gold)'}}>
                 {r.exact ? '  [exact]' : '  [drill-side only — strict wants ' +
                   r.need.map(function(sd, k){ return sd === q.combo.quotes[k].side ? null

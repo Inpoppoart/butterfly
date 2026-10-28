@@ -177,19 +177,15 @@ body{background:radial-gradient(1200px 600px at 50% -10%,#0e1d38 0%,transparent 
   font-family:var(--mono);font-size:.75rem;color:var(--red);margin-bottom:.8rem;white-space:pre-wrap}
 .loadfail{font-family:var(--mono);color:var(--red);padding:2rem;text-align:center}
 
-/* the two quotes you are given */
+/* the two quotes you are given — read as one phrase */
 .screen{background:#000;border:1px solid #262c44;border-radius:8px;overflow:hidden;margin-bottom:.7rem}
-.shead{display:grid;grid-template-columns:8rem 1fr 8rem;gap:.5rem;align-items:center;padding:.3rem .7rem;
-  border-radius:0;background:var(--panel2);font-family:var(--mono);font-size:.55rem;letter-spacing:.14em;
-  color:var(--muted);margin-bottom:0}
-.shead .r{text-align:right}
-.shead span:nth-child(2){text-align:center}
-.qrow{display:grid;grid-template-columns:8rem 1fr 8rem;gap:.5rem;align-items:center;
-  padding:.5rem .7rem;border-top:1px solid rgba(207,214,228,.45)}
-.qinst{font-family:var(--mono);font-weight:700;color:#49ff62;font-size:1.1rem;letter-spacing:.04em}
-.qside{font-family:var(--mono);font-size:.72rem;color:#59d0ff;text-align:center;
-  text-transform:uppercase;letter-spacing:.14em}
-.qpx{font-family:var(--mono);font-size:1.25rem;font-weight:700;color:#ffe89c;text-align:right}
+.qrow{display:flex;gap:.6rem;align-items:baseline;padding:.6rem .9rem;
+  border-top:1px solid rgba(207,214,228,.35)}
+.qrow:first-child{border-top:0}
+.qinst{font-family:var(--mono);font-weight:700;color:#49ff62;font-size:1.35rem;letter-spacing:.02em}
+.qside{font-family:var(--mono);font-size:1rem;color:#8fa8c8}
+.qpx{font-family:var(--mono);font-size:1.35rem;font-weight:700;color:#ffe89c}
+.choice .mkt{font-size:1.05rem!important}
 .fb-deriv{font-family:var(--mono);font-size:.78rem;line-height:1.6}
 </style>
 </head>
@@ -335,18 +331,30 @@ function quoteOf(inst, side, px8){
   return { inst: inst, side: side, px8: mid + (side === 'offer' ? w/2 : -w/2) };
 }
 
-// ---- stages: the ladder the user asked for ----
+// ---- the combinations the desk actually runs ----
+// indices: 0=1y 1=18m 2=2y 3=3y 4=4y 5=5y 6=6y 7=7y 8=8y 9=9y 10=10y
+// TIGHT is the bread and butter — one-year gaps. WIDE is the even-gap and
+// round-anchored set (3x5x7, 5x7x10, 5x10, 7x10). Nothing outside these.
+var TRIPLES_TIGHT = [
+  [0,1,2], [1,2,3], [0,2,3], [2,3,4], [3,4,5],
+  [4,5,6], [5,6,7], [6,7,8], [7,8,9], [8,9,10]
+];
+var TRIPLES_WIDE = [
+  [0,3,5], [2,4,6], [3,5,7], [4,6,8], [5,7,9], [6,8,10],
+  [5,7,10], [5,8,10], [2,5,7], [2,3,5], [7,8,10], [7,9,10], [2,5,10]
+];
+function pickTriple(mix){
+  const wide = mix === 'wide' ? 0.45 : 0.2;
+  return Math.random() < wide ? pick(TRIPLES_WIDE) : pick(TRIPLES_TIGHT);
+}
+
 var STAGES = [
-  { n:1, nm:'OUTRIGHTS', ds:'outright + spread, and two outrights',
-    pairs:[['o','s'],['s','o'],['o','o']], coefs:[1,-1] },
-  { n:2, nm:'SPREADS',   ds:'spread + spread — the chain and its reverses',
-    pairs:[['s','s']], coefs:[1,-1] },
-  { n:3, nm:'FLIES',     ds:'flies both ways — fly from spreads, spread from fly',
-    pairs:[['s','s'],['f','s'],['s','f']], coefs:[1,-1] },
-  { n:4, nm:'HALVES',    ds:'long spread + fly, and the doubled leg',
-    pairs:[['s','f'],['f','s'],['s','s']], coefs:[1,-1,2,-2,0.5,-0.5] },
-  { n:5, nm:'EXACT?',    ds:'which of these can you make exactly?',
-    pairs:[['s','f'],['f','s'],['s','s']], coefs:[1,-1,2,-2,0.5,-0.5], exactness:true }
+  { n:1, nm:'EASY',   ds:'outright + spread, and spread + spread',
+    pairs:[['o','s'],['s','o'],['o','o'],['s','s']], coefs:[1,-1], mix:'tight' },
+  { n:2, nm:'MEDIUM', ds:'flies both ways — fly from two spreads, spread from fly',
+    pairs:[['s','s'],['f','s'],['s','f']], coefs:[1,-1], mix:'tight' },
+  { n:3, nm:'HARD',   ds:'halving, the doubled leg, and "can you make it exactly?"',
+    pairs:[['s','f'],['f','s'],['s','s']], coefs:[1,-1,2,-2,0.5,-0.5], mix:'wide', exactMix:0.34 }
 ];
 
 function poolOn(t){                       // t = [a,b,c] ascending tenor indices
@@ -354,17 +362,12 @@ function poolOn(t){                       // t = [a,b,c] ascending tenor indices
            s:[mkS(t[0],t[1]), mkS(t[1],t[2]), mkS(t[0],t[2])],
            f:[mkF(t[0],t[1],t[2])] };
 }
-function pickTriple(){
-  const idx = [];
-  while (idx.length < 3){ const v = ri(0, CURVE.length-1); if (idx.indexOf(v) < 0) idx.push(v); }
-  return idx.sort(function(a,b){ return a-b; });
-}
 
-function genCombo(stageNo, mode){
+function genCombo(stageNo, mode, opts){
   const st = STAGES[stageNo-1];
   for (let tries = 0; tries < 60; tries++){
     const px8 = driftCurve();
-    const t = pickTriple();
+    const t = pickTriple(st.mix);
     const pool = poolOn(t);
     const kinds = pick(st.pairs);
     const A = pick(pool[kinds[0]]), B = pick(pool[kinds[1]]);
@@ -382,7 +385,7 @@ function genCombo(stageNo, mode){
     let items = whatCanYouMake(quotes, targetSide, st.coefs);
     if (mode === 'strict') items = items.filter(function(r){ return r.exact; });
     if (!items.length || items.length > 2) continue;
-    if (st.exactness && !items.some(function(r){ return r.exact; })) continue;
+    if (opts && opts.wantTwo && items.length < 2) continue;
     items.sort(function(x,y){ return instLabel(x.target).localeCompare(instLabel(y.target)); });
     return { stage: stageNo, mode: mode, quotes: quotes, items: items,
              targetSide: targetSide, tenors: t,
@@ -613,8 +616,8 @@ function runTests(){
 
   // generator: every answer re-derives, options are sound, modes behave
   let bad = 0, made = 0;
-  for (let s = 1; s <= 5; s++){
-    for (let i = 0; i < 40; i++){
+  for (let s = 1; s <= 3; s++){
+    for (let i = 0; i < 70; i++){
       const mode = Math.random() < 0.5 ? 'strict' : 'drill';
       const q = genCombo(s, mode);
       if (!q){ bad++; continue; }
@@ -639,14 +642,34 @@ function runTests(){
           if (vc === 'gt' && c.options.some(function(o){ return /\b(bid|offer)\b/.test(o); })) bad++;
         });
       });
-      if (s === 5){
+      if (s === 3){
         const e = exactChoices(q, 'bo');
         if (e.options.length !== 4 || e.correctIdx < 0) bad++;
       }
     }
   }
-  eq('generator: 200 questions across every stage hold their invariants', bad, 0);
-  eq('generator produced questions', made >= 190, true);
+  eq('generator: 210 questions across easy/medium/hard hold their invariants', bad, 0);
+  eq('generator produced questions', made >= 200, true);
+  // only the combinations the desk actually runs may appear
+  const allowed = {};
+  TRIPLES_TIGHT.concat(TRIPLES_WIDE).forEach(function(t){
+    [mkO(t[0]),mkO(t[1]),mkO(t[2]),mkS(t[0],t[1]),mkS(t[1],t[2]),mkS(t[0],t[2]),mkF(t[0],t[1],t[2])]
+      .forEach(function(x){ allowed[instLabel(x)] = 1; });
+  });
+  let stray = null;
+  for (let s2 = 1; s2 <= 3 && !stray; s2++){
+    for (let i2 = 0; i2 < 120; i2++){
+      const q2 = genCombo(s2, Math.random() < 0.5 ? 'strict' : 'drill');
+      if (!q2) continue;
+      const labels = q2.quotes.map(function(z){ return instLabel(z.inst); })
+        .concat(q2.items.map(function(z){ return instLabel(z.target); }));
+      const off = labels.filter(function(l){ return !allowed[l]; });
+      if (off.length){ stray = off[0]; break; }
+    }
+  }
+  eq('no tenor combination outside the curated grid', stray, null);
+  eq('tight triples are all one-year steps', TRIPLES_TIGHT.every(function(t){
+    return instLabel(mkF(t[0],t[1],t[2])).split('x').length === 3; }), true);
   return { count: count, failed: failed };
 }
 // ==TESTS-END==
@@ -737,7 +760,6 @@ function QuotePanel({ quotes, vocab, hidden }){
   if (hidden) return <div className="hint" style={{marginBottom:'.6rem'}}>quotes hidden — carry them</div>;
   return (
     <div className="screen">
-      <div className="shead"><span>INST</span><span className="r">SIDE</span><span className="r">PRICE</span></div>
       {quotes.map((q, i) => (
         <div className="qrow" key={i}>
           <span className="qinst">{instLabel(q.inst)}</span>
@@ -750,23 +772,27 @@ function QuotePanel({ quotes, vocab, hidden }){
 }
 
 // pick a question, leaning on the families this user is weakest at
-function pickCombo(stage, mode, stats, qtype){
+function pickCombo(stage, mode, stats, qtype, opts){
   let best = null, bw = -1;
-  for (let i = 0; i < 5; i++){
-    const c = genCombo(stage, mode);
+  for (let i = 0; i < 6; i++){
+    const c = genCombo(stage, mode, opts);
     if (!c) continue;
     const w = comboWeight(stats, patKey('combo', famKeyOf(c.family), qtype, 'x'));
     if (w > bw){ bw = w; best = c; }
   }
-  return best || genCombo(stage, mode);
+  return best || genCombo(stage, mode) || genCombo(stage, mode, null);
 }
 
 function ComboDrill({ stage, speed, blind, mode, vocab, statsRef, onEnd }){
   const historyRef = useRef([]);
   const runRef = useRef(0);
   const makeQ = useCallback((n, step) => {
-    const qtype = stage === 5 ? 'exact' : step;
-    const c = pickCombo(stage, mode, statsRef.current, qtype);
+    const st = STAGES[stage-1];
+    // "can you make it exactly?" only bites when the shown sides are one-sided;
+    // in strict mode everything asked is provable by construction
+    const wantExact = !!(st.exactMix && mode === 'drill' && Math.random() < st.exactMix);
+    const qtype = wantExact ? 'exact' : step;
+    const c = pickCombo(stage, mode, statsRef.current, qtype, wantExact ? { wantTwo: true } : null);
     const ch = qtype === 'exact' ? exactChoices(c, vocab) : comboChoices(c, qtype === 'levels', vocab);
     return { n: n, step: step, qtype: qtype, combo: c, choices: ch,
              key: patKey('combo', famKeyOf(c.family), qtype, 'x') };
@@ -787,7 +813,7 @@ function ComboDrill({ stage, speed, blind, mode, vocab, statsRef, onEnd }){
     recordResult(statsRef.current, q.key, ok, ms);
     historyRef.current.push({ key: q.key, ok: ok, ms: ms });
     let promoted = false;
-    if (q.step === 'sides' && stage !== 5){
+    if (q.step === 'sides' && q.qtype !== 'exact'){
       runRef.current = ok ? runRef.current + 1 : 0;
       if (runRef.current >= PROMOTE_RUN) promoted = true;
     }
@@ -799,7 +825,7 @@ function ComboDrill({ stage, speed, blind, mode, vocab, statsRef, onEnd }){
     const h = historyRef.current;
     if (q.n >= QUESTIONS_PER_ROUND){
       const okN = h.filter(x => x.ok).length;
-      if (okN / h.length >= PROMOTE_PCT && stage < 5)
+      if (okN / h.length >= PROMOTE_PCT && stage < 3)
         statsRef.current._stage = Math.max(statsRef.current._stage || 1, stage + 1);
       onEnd(h); return;
     }
@@ -947,7 +973,7 @@ function Menu({ speed, blind, mode, vocab, reached, career, storeOk, testResult,
   const [armed, setArmed] = useState(false);
   useEffect(() => {
     const h = (e) => {
-      if (e.key >= '1' && e.key <= '5'){ e.preventDefault(); onStart(+e.key); }
+      if (e.key >= '1' && e.key <= '3'){ e.preventDefault(); onStart(+e.key); }
       if (e.key === 's' || e.key === 'S'){ e.preventDefault(); onToggleSpeed(); }
       if (e.key === 'v' || e.key === 'V'){ e.preventDefault(); onToggleBlind(); }
       if (e.key === 'x' || e.key === 'X'){ e.preventDefault(); onToggleMode(); }

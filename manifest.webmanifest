@@ -1,7 +1,7 @@
 {
-  "name": "SHIFT — Implied Price Shift Trainer",
-  "short_name": "SHIFT",
-  "description": "Desk trainer for implied prices: re-quote on a shift, read the book, make the price when the phone rings.",
+  "name": "MAKE IT \u2014 spread & fly combination trainer",
+  "short_name": "MAKE IT",
+  "description": "Two one-sided quotes in: which instrument do you make, which side, at what level.",
   "start_url": "implied-shift.html",
   "scope": "./",
   "display": "standalone",
@@ -9,8 +9,23 @@
   "background_color": "#05060a",
   "theme_color": "#05060a",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

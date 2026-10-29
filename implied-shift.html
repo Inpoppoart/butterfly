@@ -328,6 +328,28 @@ function whatCanYouMake(quotes, targetSide, allowed){
     .filter(function(r){ return r.onGrid; });
 }
 
+// A doubled leg is not a special rule, it is two ordinary steps run together:
+// 1x2 offer = 1x3 offer − 2x3 bid, then 1x2x3 offer = 1x2 offer − 2x3 bid,
+// which collapses to 1x3 offer − 2 x (2x3 bid). Recover the two steps so the
+// feedback reads the way the desk says it.
+var STEP = [1, -1, 0.5, -0.5];
+function chainOf(srcs, coefs){
+  if (coefs.every(function(c){ return Math.abs(c) !== 2; })) return null;
+  const want = coefs.join(',');
+  for (let i = 0; i < STEP.length; i++) for (let j = 0; j < STEP.length; j++){
+    const c1 = [STEP[i], STEP[j]];
+    const mid = recognize(combineW(srcs, c1));
+    if (!mid || srcs.some(function(x){ return instKey(x) === instKey(mid); })) continue;
+    for (let k = 0; k < srcs.length; k++)
+      for (let a = 0; a < STEP.length; a++) for (let b = 0; b < STEP.length; b++){
+        const c2 = srcs.map(function(_, m){ return STEP[a]*c1[m] + (m === k ? STEP[b] : 0); });
+        if (c2.join(',') !== want) continue;
+        return { mid: mid, midCoefs: c1, useMid: STEP[a], leg: k, legCoef: STEP[b] };
+      }
+  }
+  return null;
+}
+
 // ---- quotes on the board ----
 // A curve moves nearly in parallel. Shocking each tenor on its own is what
 // wrecks the relative values: a spread becomes the difference of two shocks
@@ -372,8 +394,8 @@ var STAGES = [
     pairs:[['o','s'],['s','o'],['o','o'],['s','s']], coefs:[1,-1], mix:'tight' },
   { n:2, nm:'MEDIUM', ds:'flies both ways — fly from two spreads, spread from fly',
     pairs:[['s','s'],['f','s'],['s','f']], coefs:[1,-1], mix:'tight' },
-  { n:3, nm:'HARD',   ds:'halving, the doubled leg, and "can you make it exactly?"',
-    pairs:[['s','f'],['f','s'],['s','s']], coefs:[1,-1,2,-2,0.5,-0.5], mix:'wide', exactMix:0.34 }
+  { n:3, nm:'HARD',   ds:'halving and the doubled leg, on the wider tenor gaps',
+    pairs:[['s','f'],['f','s'],['s','s']], coefs:[1,-1,2,-2,0.5,-0.5], mix:'wide' }
 ];
 
 function poolOn(t){                       // t = [a,b,c] ascending tenor indices
@@ -382,7 +404,10 @@ function poolOn(t){                       // t = [a,b,c] ascending tenor indices
            f:[mkF(t[0],t[1],t[2])] };
 }
 
-function genCombo(stageNo, mode, opts){
+// Every question shows the sides the identity needs, so every question has a
+// real answer. Two offers imply nothing: 18mx3 offer - 18mx2 offer is not a
+// 2x3 offer, it wants the 18mx2 BID. The generator never asks that.
+function genCombo(stageNo){
   const st = STAGES[stageNo-1];
   for (let tries = 0; tries < 60; tries++){
     const px8 = driftCurve();
@@ -404,28 +429,16 @@ function genCombo(stageNo, mode, opts){
     if (!ds.length) continue;
     const targetSide = pick(['bid','offer']);
 
-    // The one-sided drill convention is sanctioned only for spread/fly
-    // arithmetic (rulebook section 4). Anything involving an outright is
-    // section 3A and is ALWAYS strict: a 4x6 bid is 6y bid − 4y offer, and
-    // 6y bid − 4y bid is not a 4x6 bid in any sense.
-    const outrightInvolved = srcs[0].kind === 'o' || srcs[1].kind === 'o';
-    const oneSided = mode === 'drill' && !outrightInvolved;
-    const sides = oneSided ? [targetSide, targetSide]
-                           : reqSides(pick(ds).coefs, targetSide);
+    // the sides one real identity demands - that is what goes on the board
+    const sides = reqSides(pick(ds).coefs, targetSide);
 
     const quotes = [quoteOf(srcs[0], sides[0], px8), quoteOf(srcs[1], sides[1], px8)];
-    let items = whatCanYouMake(quotes, targetSide, st.coefs);
-    if (!oneSided) items = items.filter(function(r){ return r.exact; });
-    // rulebook section 4 sanctions 1:1 (4A-4C) and halving (4D) only. A doubled
-    // leg is a strict pattern - it is where 1x18mx2 = 1x2 - 2x(18mx2) lives,
-    // mixed-sided and exact - so it has no place in one-sided arithmetic.
-    if (oneSided) items = items.filter(function(r){
-      return r.coefs.every(function(c){ return Math.abs(c) === 1 || Math.abs(c) === 0.5; });
-    });
+    // and the answer is everything those exact sides prove, nothing else
+    const items = whatCanYouMake(quotes, targetSide, st.coefs)
+      .filter(function(r){ return r.exact; });
     if (!items.length || items.length > 2) continue;
-    if (opts && opts.wantTwo && items.length < 2) continue;
     items.sort(function(x,y){ return instLabel(x.target).localeCompare(instLabel(y.target)); });
-    return { stage: stageNo, mode: mode, oneSided: oneSided, quotes: quotes, items: items,
+    return { stage: stageNo, quotes: quotes, items: items,
              targetSide: targetSide, tenors: t,
              family: famOf(quotes, items) };
   }
@@ -448,6 +461,56 @@ function itemText(r, withLevel, vocab){
 }
 function ansText(items, withLevel, vocab){
   return items.map(function(r){ return itemText(r, withLevel, vocab); }).join('  ·  ');
+}
+// "8y offer − 7y bid", never "−7y bid + 8y offer": positives lead
+function termsText(parts, vocab){
+  return parts.map(function(p){ return { c: p.c, lbl: instLabel(p.inst) + ' ' + sideWord(p.side, vocab) }; })
+    .sort(function(x, y){ return (y.c > 0) - (x.c > 0); })
+    .map(function(e, i){
+      return (i ? (e.c < 0 ? ' − ' : ' + ') : (e.c < 0 ? '−' : '')) +
+        (Math.abs(e.c) === 1 ? '' : Math.abs(e.c) === 0.5 ? '½×' : Math.abs(e.c) + '×') + e.lbl;
+    }).join('');
+}
+// The lines of working behind one answer. A doubled leg is shown as the two
+// steps it really is, through the instrument you make on the way.
+function workings(quotes, r, vocab){
+  const term = function(c, inst, side){ return { c: c, inst: inst, side: side }; };
+  const one = function(){
+    return [ instLabel(r.target) + ' ' + sideWord(r.side, vocab) + ' = ' +
+      termsText(r.coefs.map(function(c, k){ return term(c, quotes[k].inst, quotes[k].side); }), vocab) +
+      ' = ' + fmt(r.px8) ];
+  };
+  const ch = chainOf(quotes.map(function(q){ return q.inst; }), r.coefs);
+  if (!ch) return one();
+  // the intermediate is wanted on the side the second step takes it from
+  const midSide = ch.useMid > 0 ? r.side : oppSide(r.side);
+  // only show the chain if both steps really are provable from what is shown
+  if (!reqSides(ch.midCoefs, midSide).every(function(sd, k){ return sd === quotes[k].side; }))
+    return one();
+  if ((ch.legCoef > 0 ? r.side : oppSide(r.side)) !== quotes[ch.leg].side) return one();
+  let midV = 0; ch.midCoefs.forEach(function(c, k){ midV += c * quotes[k].px8; });
+  return [
+    instLabel(ch.mid) + ' ' + sideWord(midSide, vocab) + ' = ' +
+      termsText(ch.midCoefs.map(function(c, k){ return term(c, quotes[k].inst, quotes[k].side); }), vocab) +
+      ' = ' + fmt(midV),
+    instLabel(r.target) + ' ' + sideWord(r.side, vocab) + ' = ' +
+      termsText([ term(ch.useMid, ch.mid, midSide),
+                  term(ch.legCoef, quotes[ch.leg].inst, quotes[ch.leg].side) ], vocab) +
+      ' = ' + fmt(r.px8)
+  ];
+}
+// The whole working, in the order you would do it at the desk. When a chain
+// passes through an instrument that is itself part of the answer, that line is
+// already there — write it once and build on it.
+function allWorkings(quotes, items, vocab){
+  const out = [], seen = {};
+  items.forEach(function(r){
+    workings(quotes, r, vocab).forEach(function(l){
+      if (seen[l]) return;
+      seen[l] = 1; out.push(l);
+    });
+  });
+  return out;
 }
 function buildOptions(correct, traps, filler){
   const seen = {}; seen[correct] = 1;
@@ -489,24 +552,22 @@ function comboChoices(q, withLevel, vocab){
     if (have[instKey(x)]) return false;
     return reach === 0 ? wsum(x) === 0 : true;
   });
-  shuffleArr(others).slice(0, 3).forEach(function(o){
+  // Best trap first: an instrument these quotes DO reach arithmetically but
+  // only off the side you were not shown — a 7x8 offer from a 6x8 offer and a
+  // fly offer. That is the whole mistake this drill exists to stop.
+  const nearMiss = {};
+  whatCanYouMake(q.quotes, items[0].side).forEach(function(r){
+    if (!r.exact) nearMiss[instKey(r.target)] = 1;
+  });
+  shuffleArr(others).sort(function(x, y){
+    return (nearMiss[instKey(y)] ? 1 : 0) - (nearMiss[instKey(x)] ? 1 : 0);
+  }).slice(0, 3).forEach(function(o){
     // a real instrument on these tenors that these two quotes do NOT make
     traps.push(ansText([{ target:o, side:items[0].side, px8: items[0].px8, coefs:[] }].concat(items.slice(1)), withLevel, vocab));
     traps.push(ansText([{ target:o, side:oppSide(items[0].side), px8: items[0].px8, coefs:[] }].concat(items.slice(1)), withLevel, vocab));
   });
   return buildOptions(correct, shuffleArr(traps), ['nothing — these two do not combine']);
 }
-function exactChoices(q, vocab){
-  const lbl = function(r){ return itemText(r, false, vocab); };
-  const ex = q.items.filter(function(r){ return r.exact; });
-  const correct = ex.length === q.items.length ? 'both exact'
-                : ex.length === 0 ? 'neither — drill-side only'
-                : lbl(ex[0]) + ' only';
-  const traps = q.items.map(function(r){ return lbl(r) + ' only'; })
-    .concat(['both exact', 'neither — drill-side only']);
-  return buildOptions(correct, shuffleArr(traps), ['cannot tell from these quotes']);
-}
-
 // ---- spaced-repetition-lite: weak and slow families come back sooner ----
 function patKey(type, role, side, dir){ return type + '|' + role + '|' + side + '|' + dir; }
 function median(a){
@@ -631,7 +692,9 @@ function runTests(){
      ex([{inst:mkS(IX['5y'],IX['6y']),side:'bid',px8:E(4)},
          {inst:mkS(IX['6y'],IX['7y']),side:'bid',px8:E(3.5)}],'bid')
        .filter(function(s){ return s.indexOf('5x7') === 0; }), ['5x7 bid 7.5 [exact]']);
-  eq('ex2: 5x7 offer 12 + 5x6 offer 5 -> 6x7 offer 7, drill-side',
+  // ex2/4/5 are not exact, so no question is ever built from them - two
+  // same-side quotes imply nothing, which is what these three record
+  eq('ex2: 5x7 offer + 5x6 offer does NOT imply a 6x7 offer',
      ex([{inst:mkS(IX['5y'],IX['7y']),side:'offer',px8:E(12)},
          {inst:mkS(IX['5y'],IX['6y']),side:'offer',px8:E(5)}],'offer')
        .filter(function(s){ return s.indexOf('6x7') === 0; }), ['6x7 offer 7 [drill]']);
@@ -639,12 +702,12 @@ function runTests(){
      ex([{inst:mkS(IX['8y'],IX['10y']),side:'offer',px8:E(18)},
          {inst:mkF(IX['8y'],IX['9y'],IX['10y']),side:'bid',px8:E(2)}],'offer')
        .filter(function(s){ return s.indexOf('9x10') === 0; }), ['9x10 offer 8 [exact]']);
-  eq('ex4: 8x10 bid 22 + fly bid 2 -> 8x9 bid exact, 9x10 bid only drill-side',
+  eq('ex4: 8x10 bid + fly bid gives an 8x9 bid, but no 9x10 bid',
      ex([{inst:mkS(IX['8y'],IX['10y']),side:'bid',px8:E(22)},
          {inst:mkF(IX['8y'],IX['9y'],IX['10y']),side:'bid',px8:E(2)}],'bid')
        .filter(function(s){ return /^(8x9|9x10) /.test(s); }).sort(),
      ['8x9 bid 12 [exact]','9x10 bid 10 [drill]']);
-  eq('ex5: 6x8 offer 12 + fly offer 2 -> 6x7 exact, 7x8 drill-side',
+  eq('ex5: 6x8 offer + fly offer gives a 6x7 offer, but no 7x8 offer',
      ex([{inst:mkS(IX['6y'],IX['8y']),side:'offer',px8:E(12)},
          {inst:mkF(IX['6y'],IX['7y'],IX['8y']),side:'offer',px8:E(2)}],'offer')
        .filter(function(s){ return /^(6x7|7x8) /.test(s); }).sort(),
@@ -671,7 +734,53 @@ function runTests(){
                      {inst:mkO(IX['6y']),side:'bid',px8:E(234.375)}],'bid')
        .filter(function(r){ return instLabel(r.target) === '4x6' && r.exact; }).length, 0);
 
-  // --- guards for the three defects that shipped ---
+  // THE SCREENSHOT: two offers imply nothing. 2x3 offer wants 18mx3 offer −
+  // 18mx2 BID, and no question may ever be built on these two quotes.
+  eq('18mx2 offer + 18mx3 offer imply nothing at all',
+     whatCanYouMake([{inst:mkS(IX['18m'],IX['2y']),side:'offer',px8:E(9.75)},
+                     {inst:mkS(IX['18m'],IX['3y']),side:'offer',px8:E(24.75)}],'offer',
+                    [1,-1,2,-2,0.5,-0.5])
+       .filter(function(r){ return r.exact; }).length, 0);
+  // the user's own chain, whole: 1x2 first, then the fly off that same 2x3 bid
+  const chain13 = whatCanYouMake([{inst:mkS(IX['1y'],IX['3y']),side:'offer',px8:E(38.5)},
+                                  {inst:mkS(IX['2y'],IX['3y']),side:'bid',px8:E(15)}],'offer',
+                                 [1,-1,2,-2,0.5,-0.5]).filter(function(r){ return r.exact; });
+  eq('1x3 offer + 2x3 bid make BOTH the 1x2 and the fly',
+     chain13.map(function(r){ return instLabel(r.target) + ' ' + fmt(r.px8); }).sort(),
+     ['1x2 23.5', '1x2x3 8.5']);
+  eq('the doubled leg is shown as the two steps it is',
+     workings([{inst:mkS(IX['1y'],IX['3y']),side:'offer',px8:E(38.5)},
+               {inst:mkS(IX['2y'],IX['3y']),side:'bid',px8:E(15)}],
+              chain13.filter(function(r){ return instLabel(r.target) === '1x2x3'; })[0], 'bo'),
+     ['1x2 offer = 1x3 offer − 2x3 bid = 23.5',
+      '1x2x3 offer = 1x2 offer − 2x3 bid = 8.5']);
+  // the working leads with the positive leg however the board is ordered
+  eq('8y offer − 7y bid, never −7y bid + 8y offer',
+     workings([{inst:mkO(IX['7y']),side:'bid',px8:E(243.375)},
+               {inst:mkO(IX['8y']),side:'offer',px8:E(254)}],
+              whatCanYouMake([{inst:mkO(IX['7y']),side:'bid',px8:E(243.375)},
+                              {inst:mkO(IX['8y']),side:'offer',px8:E(254)}],'offer')
+                .filter(function(r){ return instLabel(r.target) === '7x8'; })[0], 'bo'),
+     ['7x8 offer = 8y offer − 7y bid = 10.625']);
+  // when the chain runs through an instrument that IS part of the answer, the
+  // line is written once and the next step builds on it
+  const twoQ = [{inst:mkS(IX['4y'],IX['6y']),side:'bid',px8:E(20.5)},
+                {inst:mkF(IX['4y'],IX['6y'],IX['8y']),side:'offer',px8:E(2.875)}];
+  const twoI = whatCanYouMake(twoQ,'bid',[1,-1,2,-2,0.5,-0.5]).filter(function(r){ return r.exact; })
+    .sort(function(x,y){ return instLabel(x.target).localeCompare(instLabel(y.target)); });
+  eq('a shared intermediate is written once',
+     allWorkings(twoQ, twoI, 'bo'),
+     ['6x8 bid = 4x6 bid − 4x6x8 offer = 17.625',
+      '4x8 bid = 6x8 bid + 4x6 bid = 38.125']);
+  eq('a single step is still a single line',
+     workings([{inst:mkS(IX['1y'],IX['2y']),side:'bid',px8:E(23.5)},
+               {inst:mkS(IX['2y'],IX['3y']),side:'bid',px8:E(15)}],
+              whatCanYouMake([{inst:mkS(IX['1y'],IX['2y']),side:'bid',px8:E(23.5)},
+                              {inst:mkS(IX['2y'],IX['3y']),side:'bid',px8:E(15)}],'bid')
+                .filter(function(r){ return instLabel(r.target) === '1x3'; })[0], 'bo'),
+     ['1x3 bid = 1x2 bid + 2x3 bid = 38.5']);
+
+  // --- guards for the defects that shipped ---
   // (1) the board must be a market: a curve moves in parallel, so spreads move
   // a little and flies barely. Independent per-tenor drift printed a 7x8x9 at
   // -2.25 when it truly sits at -0.625.
@@ -694,24 +803,42 @@ function runTests(){
 
   // (2) structures are zero-sum, so they can never name an outright
   eq('weight sums', [wsum(mkO(3)), wsum(mkS(2,3)), wsum(mkF(2,3,4))], [1, 0, 0]);
-  let unreachable = 0, dblInDrill = 0, gen = 0;
+  let unreachable = 0, unprovable = 0, hidden = 0, gen = 0;
   for (let s3 = 1; s3 <= 3; s3++){
     for (let i3 = 0; i3 < 60; i3++){
-      const q3 = genCombo(s3, Math.random() < 0.5 ? 'strict' : 'drill');
+      const q3 = genCombo(s3);
       if (!q3) continue;
       gen++;
       if (q3.quotes.every(function(z){ return z.inst.kind !== 'o'; })){
         const opts3 = comboChoices(q3, false, 'bo').options;
         if (opts3.some(function(o){ return /\b\d+y\b/.test(o); })) unreachable++;
       }
-      // (3) one-sided arithmetic is 1:1 and halving only - no doubled leg
-      if (q3.oneSided && q3.items.some(function(r){
-            return r.coefs.some(function(c){ return Math.abs(c) === 2; }); })) dblInDrill++;
+      // (3) every question is answerable: the shown sides prove every item,
+      // and nothing the shown sides prove is left out of the answer
+      if (!q3.items.every(function(r){
+            return reqSides(r.coefs, r.side).every(function(sd, k){
+              return sd === q3.quotes[k].side; }); })) unprovable++;
+      const claimed = {}; q3.items.forEach(function(r){ claimed[instKey(r.target)] = 1; });
+      if (whatCanYouMake(q3.quotes, q3.targetSide, STAGES[s3-1].coefs)
+            .some(function(r){ return r.exact && !claimed[instKey(r.target)]; })) hidden++;
     }
   }
   eq('no option names an instrument these quotes cannot reach', unreachable, 0);
-  eq('one-sided answers never use a doubled leg', dblInDrill, 0);
+  eq('every answer is proved by the sides on the board', unprovable, 0);
+  eq('nothing the board proves is left out of the answer', hidden, 0);
   eq('guards actually ran against generated questions', gen >= 150, true);
+  // the drill must keep covering the identities that want opposite sides -
+  // pinning both quotes to the target side silently drops two thirds of them
+  let sameSide = 0, mixedSide = 0;
+  for (let s4 = 1; s4 <= 3; s4++){
+    for (let i4 = 0; i4 < 60; i4++){
+      const q4 = genCombo(s4);
+      if (!q4) continue;
+      if (q4.quotes[0].side === q4.quotes[1].side) sameSide++; else mixedSide++;
+    }
+  }
+  eq('questions come in both same-sided and opposite-sided shapes',
+     [sameSide > 20, mixedSide > 20], [true, true]);
   // the doubled leg must survive where it belongs: strict, mixed-sided
   eq('1x18mx2 bid off 1x2 bid and 18mx2 offer is still exact',
      whatCanYouMake([{inst:mkS(IX['1y'],IX['2y']),side:'bid',px8:E(23.5)},
@@ -719,12 +846,11 @@ function runTests(){
        .filter(function(r){ return instLabel(r.target) === '1x18mx2' && r.exact; })
        .map(function(r){ return fmt(r.px8); }), ['3.75']);
 
-  // generator: every answer re-derives, options are sound, modes behave
+  // generator: every answer re-derives and every option is sound
   let bad = 0, made = 0;
   for (let s = 1; s <= 3; s++){
     for (let i = 0; i < 70; i++){
-      const mode = Math.random() < 0.5 ? 'strict' : 'drill';
-      const q = genCombo(s, mode);
+      const q = genCombo(s);
       if (!q){ bad++; continue; }
       made++;
       q.items.forEach(function(r){
@@ -735,14 +861,15 @@ function runTests(){
         const need = reqSides(r.coefs, r.side);
         if (need.every(function(sd,k){ return sd === q.quotes[k].side; }) !== r.exact) bad++;
       });
-      if (mode === 'strict' && !q.items.every(function(r){ return r.exact; })) bad++;
-      // an outright anywhere in the sources means strict sides, always
-      const hasO = q.quotes.some(function(z){ return z.inst.kind === 'o'; });
-      if (hasO && !q.items.every(function(r){ return r.exact; })) bad++;
-      if (!q.oneSided && !q.items.every(function(r){ return r.exact; })) bad++;
-      if (q.oneSided && hasO) bad++;
-      if (q.oneSided && q.quotes[0].side !== q.quotes[1].side) bad++;
-      if (q.oneSided && q.items.some(function(r){ return r.side !== q.quotes[0].side; })) bad++;
+      // nothing is ever asked that the board does not prove
+      if (!q.items.every(function(r){ return r.exact; })) bad++;
+      // and the working reads back as whole lines, one or two of them
+      q.items.forEach(function(r){
+        const w = workings(q.quotes, r, 'bo');
+        if (w.length < 1 || w.length > 2) bad++;
+        if (w[w.length-1].indexOf(instLabel(r.target) + ' ' + r.side + ' = ') !== 0) bad++;
+        if (w[w.length-1].slice(-(' = ' + fmt(r.px8)).length) !== ' = ' + fmt(r.px8)) bad++;
+      });
       [true,false].forEach(function(wl){
         ['bo','gt'].forEach(function(vc){
           const c = comboChoices(q, wl, vc);
@@ -752,10 +879,6 @@ function runTests(){
           if (vc === 'gt' && c.options.some(function(o){ return /\b(bid|offer)\b/.test(o); })) bad++;
         });
       });
-      if (s === 3){
-        const e = exactChoices(q, 'bo');
-        if (e.options.length !== 4 || e.correctIdx < 0) bad++;
-      }
     }
   }
   eq('generator: 210 questions across easy/medium/hard hold their invariants', bad, 0);
@@ -769,7 +892,7 @@ function runTests(){
   let stray = null;
   for (let s2 = 1; s2 <= 3 && !stray; s2++){
     for (let i2 = 0; i2 < 120; i2++){
-      const q2 = genCombo(s2, Math.random() < 0.5 ? 'strict' : 'drill');
+      const q2 = genCombo(s2);
       if (!q2) continue;
       const labels = q2.quotes.map(function(z){ return instLabel(z.inst); })
         .concat(q2.items.map(function(z){ return instLabel(z.target); }));
@@ -882,31 +1005,25 @@ function QuotePanel({ quotes, vocab, hidden }){
 }
 
 // pick a question, leaning on the families this user is weakest at
-function pickCombo(stage, mode, stats, qtype, opts){
+function pickCombo(stage, stats, qtype){
   let best = null, bw = -1;
   for (let i = 0; i < 6; i++){
-    const c = genCombo(stage, mode, opts);
+    const c = genCombo(stage);
     if (!c) continue;
     const w = comboWeight(stats, patKey('combo', famKeyOf(c.family), qtype, 'x'));
     if (w > bw){ bw = w; best = c; }
   }
-  return best || genCombo(stage, mode) || genCombo(stage, mode, null);
+  return best || genCombo(stage);
 }
 
-function ComboDrill({ stage, speed, blind, mode, vocab, statsRef, onEnd }){
+function ComboDrill({ stage, speed, blind, vocab, statsRef, onEnd }){
   const historyRef = useRef([]);
   const runRef = useRef(0);
   const makeQ = useCallback((n, step) => {
-    const st = STAGES[stage-1];
-    // "can you make it exactly?" only bites when the shown sides are one-sided;
-    // in strict mode everything asked is provable by construction
-    const wantExact = !!(st.exactMix && mode === 'drill' && Math.random() < st.exactMix);
-    const qtype = wantExact ? 'exact' : step;
-    const c = pickCombo(stage, mode, statsRef.current, qtype, wantExact ? { wantTwo: true } : null);
-    const ch = qtype === 'exact' ? exactChoices(c, vocab) : comboChoices(c, qtype === 'levels', vocab);
-    return { n: n, step: step, qtype: qtype, combo: c, choices: ch,
-             key: patKey('combo', famKeyOf(c.family), qtype, 'x') };
-  }, [stage, mode, vocab, statsRef]);
+    const c = pickCombo(stage, statsRef.current, step);
+    return { n: n, step: step, combo: c, choices: comboChoices(c, step === 'levels', vocab),
+             key: patKey('combo', famKeyOf(c.family), step, 'x') };
+  }, [stage, vocab, statsRef]);
   const [q, setQ] = useState(() => makeQ(1, 'sides'));
   const [phase, setPhase] = useState('answer');
   const [fb, setFb] = useState(null);
@@ -923,7 +1040,7 @@ function ComboDrill({ stage, speed, blind, mode, vocab, statsRef, onEnd }){
     recordResult(statsRef.current, q.key, ok, ms);
     historyRef.current.push({ key: q.key, ok: ok, ms: ms });
     let promoted = false;
-    if (q.step === 'sides' && q.qtype !== 'exact'){
+    if (q.step === 'sides'){
       runRef.current = ok ? runRef.current + 1 : 0;
       if (runRef.current >= PROMOTE_RUN) promoted = true;
     }
@@ -974,9 +1091,7 @@ function ComboDrill({ stage, speed, blind, mode, vocab, statsRef, onEnd }){
 
   const streak = (() => { let n = 0; const h = historyRef.current;
     for (let i = h.length-1; i >= 0 && h[i].ok; i--) n++; return n; })();
-  const ask = q.qtype === 'exact'
-    ? 'which of these can you make exactly?'
-    : 'what can you make on the ' + sideWord(q.combo.targetSide, vocab) + ' side?';
+  const ask = 'what can you make on the ' + sideWord(q.combo.targetSide, vocab) + ' side?';
 
   return (
     <div>
@@ -984,8 +1099,7 @@ function ComboDrill({ stage, speed, blind, mode, vocab, statsRef, onEnd }){
         <span>STAGE <b>{stage}</b></span>
         <span>Q <b>{q.n}/{QUESTIONS_PER_ROUND}</b></span>
         <span>STREAK <b>{streak}</b></span>
-        <span>{q.qtype === 'exact' ? 'EXACTNESS' : q.step === 'sides' ? 'SIDES ONLY' : 'WITH LEVELS'}</span>
-        <span>{mode === 'strict' ? 'STRICT' : 'DRILL'}</span>
+        <span>{q.step === 'sides' ? 'SIDES ONLY' : 'WITH LEVELS'}</span>
         <span style={{marginLeft:'auto'}}>
           <button type="button" className="btn end" onClick={() => onEnd(historyRef.current)}>END ✕</button>
         </span>
@@ -998,7 +1112,7 @@ function ComboDrill({ stage, speed, blind, mode, vocab, statsRef, onEnd }){
       )}
       {seen && <React.Fragment>
       <div className="task">
-        <span className="task-label">{q.qtype === 'exact' ? 'EXACT?' : 'MAKE IT'}</span>
+        <span className="task-label">MAKE IT</span>
         <span className="task-text">{ask}</span>
         {speed && phase === 'answer' && <span className="clock">{Math.max(0, remaining/1000).toFixed(1)}s</span>}
       </div>
@@ -1020,23 +1134,8 @@ function ComboDrill({ stage, speed, blind, mode, vocab, statsRef, onEnd }){
             <span className="stk">streak {streak}</span>
           </div>
           <div className="fb-ans" style={{fontSize:'1.05rem'}}>{q.choices.options[q.choices.correctIdx]}</div>
-          {q.combo.items.map((r, i) => (
-            <div className="fb-deriv" key={i}>
-              {instLabel(r.target)} {sideWord(r.side, vocab)} = {r.coefs
-                .map(function(c, k){ return { c: c, k: k }; })
-                .sort(function(x, y){ return (y.c > 0) - (x.c > 0); })   // "8y offer − 7y bid", never "−7y bid + 8y offer"
-                .map(function(e, i){
-                  return (i ? (e.c < 0 ? ' − ' : ' + ') : (e.c < 0 ? '−' : '')) +
-                    (Math.abs(e.c) === 1 ? '' : Math.abs(e.c) === 0.5 ? '½×' : Math.abs(e.c) + '×') +
-                    instLabel(q.combo.quotes[e.k].inst) + ' ' + sideWord(q.combo.quotes[e.k].side, vocab);
-                }).join('')} = {fmt(r.px8)}
-              <b style={{color: r.exact ? 'var(--green)' : 'var(--gold)'}}>
-                {r.exact ? '  [exact]' : '  [drill-side only — strict wants ' +
-                  r.need.map(function(sd, k){ return sd === q.combo.quotes[k].side ? null
-                      : instLabel(q.combo.quotes[k].inst) + ' ' + sideWord(sd, vocab); })
-                    .filter(Boolean).join(' and ') + ', which you were not shown]'}
-              </b>
-            </div>
+          {allWorkings(q.combo.quotes, q.combo.items, vocab).map((line, i) => (
+            <div className="fb-deriv" key={i}>{line}</div>
           ))}
           {fb.promoted && <div className="fb-swap">STEP UP — levels from the next question</div>}
           <div className="btnrow">
@@ -1081,20 +1180,19 @@ function Summary({ history, stats, onRestart, onMenu }){
   );
 }
 
-function Menu({ speed, blind, mode, vocab, reached, career, storeOk, testResult,
-                onStart, onToggleSpeed, onToggleBlind, onToggleMode, onToggleVocab, onReset }){
+function Menu({ speed, blind, vocab, reached, career, storeOk, testResult,
+                onStart, onToggleSpeed, onToggleBlind, onToggleVocab, onReset }){
   const [armed, setArmed] = useState(false);
   useEffect(() => {
     const h = (e) => {
       if (e.key >= '1' && e.key <= '3'){ e.preventDefault(); onStart(+e.key); }
       if (e.key === 's' || e.key === 'S'){ e.preventDefault(); onToggleSpeed(); }
       if (e.key === 'v' || e.key === 'V'){ e.preventDefault(); onToggleBlind(); }
-      if (e.key === 'x' || e.key === 'X'){ e.preventDefault(); onToggleMode(); }
       if (e.key === 'g' || e.key === 'G'){ e.preventDefault(); onToggleVocab(); }
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [onStart, onToggleSpeed, onToggleBlind, onToggleMode, onToggleVocab]);
+  }, [onStart, onToggleSpeed, onToggleBlind, onToggleVocab]);
   return (
     <div className="menu">
       {testResult.failed.length > 0 &&
@@ -1109,7 +1207,6 @@ function Menu({ speed, blind, mode, vocab, reached, career, storeOk, testResult,
           </div>
         ))}
         <div className="opt">
-          <span className="optbtn" onClick={onToggleMode}><b>X</b> {mode === 'strict' ? 'STRICT — only what the shown sides prove' : 'DRILL — shown-side arithmetic'}</span>
           <span className="optbtn" onClick={onToggleVocab}><b>G</b> {vocab === 'gt' ? 'GIVEN / TAKEN' : 'BID / OFFER'}</span>
           <span className="optbtn" onClick={onToggleSpeed}><b>S</b> speed: {speed ? 'ON · 12s' : 'off'}</span>
           <span className="optbtn" onClick={onToggleBlind}><b>V</b> quotes: {blind ? 'HIDE AFTER A LOOK' : 'ON SCREEN'}</span>
@@ -1125,7 +1222,7 @@ function Menu({ speed, blind, mode, vocab, reached, career, storeOk, testResult,
         </div>
         <div className="opt">the whole rule: <b>a positive coefficient takes the same side, a negative one takes the opposite</b>. Same side adds, opposite side subtracts.</div>
         <div className="opt">long = left + right · fly = left − right · left = (long + fly)/2 · right = (long − fly)/2 · back − front = spread</div>
-        <div className="opt">STRICT only asks what the shown sides prove. DRILL allows the one-sided arithmetic you do at the desk — feedback always says which you just did.</div>
+        <div className="opt">Every question is one you can actually answer: the board always shows the sides the identity needs. Two offers imply nothing — <b>18mx3 offer − 18mx2 offer is not a 2x3 offer</b>, it wants the 18mx2 bid — so you will never be asked it.</div>
       </div>
     </div>
   );
@@ -1137,7 +1234,6 @@ function App(){
   const [stage, setStage] = useState(1);
   const [speed, setSpeed] = useState(() => !!boot.settings.speed);
   const [blind, setBlind] = useState(() => !!boot.settings.blind);
-  const [mode, setMode] = useState(() => boot.settings.mode === 'strict' ? 'strict' : 'drill');
   const [vocab, setVocab] = useState(() => boot.settings.vocab === 'gt' ? 'gt' : 'bo');
   const [roundId, setRoundId] = useState(1);
   const [lastHistory, setLastHistory] = useState([]);
@@ -1152,8 +1248,8 @@ function App(){
   });
   const persist = useCallback(() => {
     saveState(safeStore(), statsRef.current,
-      { speed: speed, blind: blind, mode: mode, vocab: vocab });
-  }, [speed, blind, mode, vocab]);
+      { speed: speed, blind: blind, vocab: vocab });
+  }, [speed, blind, vocab]);
   useEffect(() => { persist(); }, [persist]);
   const endRound = useCallback(h => {
     setLastHistory(h); setPhase('summary'); setStatsVersion(v => v + 1); persist();
@@ -1167,19 +1263,18 @@ function App(){
     <div className="app">
       <div className="hdr">
         <h1>MAKE IT</h1>
-        <span className="sub">two quotes in — what can you make · {mode === 'strict' ? 'strict' : 'drill'}</span>
+        <span className="sub">two quotes in — what can you make</span>
       </div>
       {phase === 'menu' &&
-        <Menu speed={speed} blind={blind} mode={mode} vocab={vocab} reached={reached}
+        <Menu speed={speed} blind={blind} vocab={vocab} reached={reached}
               career={careerCount(statsRef.current)} storeOk={storeOk} testResult={testResult}
               onStart={s => { setStage(s); setRoundId(r => r+1); setPhase('drill'); }}
               onToggleSpeed={() => setSpeed(x => !x)}
               onToggleBlind={() => setBlind(x => !x)}
-              onToggleMode={() => setMode(m => m === 'strict' ? 'drill' : 'strict')}
               onToggleVocab={() => setVocab(v => v === 'gt' ? 'bo' : 'gt')}
               onReset={resetProgress} />}
       {phase === 'drill' &&
-        <ComboDrill key={roundId} stage={stage} speed={speed} blind={blind} mode={mode}
+        <ComboDrill key={roundId} stage={stage} speed={speed} blind={blind}
                     vocab={vocab} statsRef={statsRef} onEnd={endRound} />}
       {phase === 'summary' &&
         <Summary history={lastHistory} stats={statsRef.current}

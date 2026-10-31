@@ -185,6 +185,19 @@ body{background:radial-gradient(1200px 600px at 50% -10%,#0e1d38 0%,transparent 
 .qinst{font-family:var(--mono);font-weight:700;color:#49ff62;font-size:1.35rem;letter-spacing:.02em}
 .qside{font-family:var(--mono);font-size:1rem;color:#8fa8c8}
 .qpx{font-family:var(--mono);font-size:1.35rem;font-weight:700;color:#ffe89c}
+.qrow.fresh{background:rgba(73,255,98,.09)}
+.qrow .qtag{font-family:var(--mono);font-size:.55rem;letter-spacing:.14em;color:var(--green);
+  border:1px solid rgba(57,255,139,.5);border-radius:4px;padding:0 .25rem;margin-left:auto}
+.imps{background:var(--panel);border:1px solid var(--border2);border-radius:10px;padding:.6rem .8rem;margin-bottom:.7rem}
+.imps .ihd{font-family:var(--mono);font-size:.6rem;letter-spacing:.2em;color:var(--muted);margin-bottom:.4rem}
+.irow{display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap;padding:.22rem 0;
+  border-top:1px solid rgba(29,39,64,.9)}
+.irow:first-of-type{border-top:0}
+.iinst{font-family:var(--mono);font-weight:700;color:var(--cyan);font-size:.95rem;min-width:5.2rem}
+.iside{font-family:var(--mono);font-size:.78rem;color:var(--muted);min-width:3rem}
+.ipx{font-family:var(--mono);font-weight:700;color:var(--gold);font-size:1.05rem;min-width:4.2rem;text-align:right}
+.ivia{font-family:var(--mono);font-size:.72rem;color:var(--muted);flex:1 1 100%}
+.feedask{font-family:var(--mono);font-size:.8rem;color:var(--muted);margin-bottom:.6rem}
 .choice .mkt{font-size:1.05rem!important}
 .fb-deriv{font-family:var(--mono);font-size:.78rem;line-height:1.6}
 </style>
@@ -451,6 +464,150 @@ function famOf(quotes, items){
   return k + (half ? '/half' : dbl ? '/x2' : '');
 }
 
+// ---- THE FEED: a board that accumulates, and everything it implies ----
+// Four tenors name every instrument you can write on them: the outrights, the
+// spreads between them, the flies across them.
+function sectorRows(t){
+  const u = [];
+  for (let i = 0; i < t.length; i++) u.push(mkO(t[i]));
+  for (let i = 0; i < t.length; i++) for (let j = i+1; j < t.length; j++) u.push(mkS(t[i], t[j]));
+  for (let i = 0; i < t.length; i++) for (let j = i+1; j < t.length; j++)
+    for (let k = j+1; k < t.length; k++) u.push(mkF(t[i], t[j], t[k]));
+  return u;
+}
+// Which pair makes what is pure algebra on the instruments, so work it out once
+// for the sector. After that a quote landing is only arithmetic.
+function sectorPlan(rows){
+  const plan = {};
+  rows.forEach(function(A){ rows.forEach(function(B){
+    if (instKey(A) === instKey(B)) return;
+    const list = [];
+    COEFS.forEach(function(c1){ COEFS.forEach(function(c2){
+      const T = recognize(combineW([A,B],[c1,c2]));
+      if (T) list.push({ c1:c1, c2:c2, T:T,
+                         bid: reqSides([c1,c2],'bid'), offer: reqSides([c1,c2],'offer') });
+    }); });
+    if (list.length) plan[instKey(A) + '>' + instKey(B)] = list;
+  }); });
+  return plan;
+}
+// An implied price is the true mid plus or minus sum(|c| x width)/2 — every leg
+// you go through widens it. Two routes to the same price therefore land on
+// different levels, and a board carries the best one it can make. So this is a
+// relaxation, not a first-one-wins: a tighter route replaces a wider one and
+// everything built on it is worked out again.
+function tighter(side, a, b){ return side === 'bid' ? a > b : a < b; }
+function addQuote(board, plan, q){
+  const k = instKey(q.inst) + '|' + q.side;
+  // A quote worse than what the board already makes changes nothing — you still
+  // show the better price. Taking it would also strand every route that stands
+  // on the price it replaced, since only an improvement is propagated onward.
+  if (board[k] && !tighter(q.side, q.px8, board[k].px8)) return board;
+  board[k] = { inst:q.inst, side:q.side, px8:q.px8, via:null, depth:0 };
+  const work = [board[k]];
+  let guard = 0;
+  while (work.length && guard++ < 40000){
+    const E = work.pop();
+    const known = Object.keys(board).map(function(x){ return board[x]; });
+    for (let i = 0; i < known.length; i++){
+      const pairs = [[E, known[i]], [known[i], E]];
+      for (let p = 0; p < 2; p++){
+        const A = pairs[p][0], B = pairs[p][1];
+        const list = plan[instKey(A.inst) + '>' + instKey(B.inst)];
+        if (!list) continue;
+        for (let d = 0; d < list.length; d++){
+          const r = list[d];
+          const v = r.c1*A.px8 + r.c2*B.px8;
+          if (!Number.isInteger(v)) continue;
+          const sides = ['bid','offer'];
+          for (let z = 0; z < 2; z++){
+            const S = sides[z];
+            if (r[S][0] !== A.side || r[S][1] !== B.side) continue;
+            const key = instKey(r.T) + '|' + S;
+            if (board[key] && !tighter(S, v, board[key].px8)) continue;
+            board[key] = { inst:r.T, side:S, px8:v, via:{ a:A, b:B, coefs:[r.c1, r.c2] },
+                           depth: Math.max(A.depth, B.depth) + 1 };
+            work.push(board[key]);
+          }
+        }
+      }
+    }
+  }
+  return board;
+}
+function boardOf(quotes, plan){
+  const board = {};
+  quotes.forEach(function(q){ addQuote(board, plan, q); });
+  return board;
+}
+// what the board implies, shallowest first so a route reads after its legs
+function impliedOf(board){
+  return Object.keys(board).map(function(k){ return board[k]; })
+    .filter(function(e){ return e.depth > 0; })
+    .sort(function(x, y){ return x.depth - y.depth ||
+      instLabel(x.inst).localeCompare(instLabel(y.inst)) ||
+      x.side.localeCompare(y.side); });
+}
+
+// The sectors the desk actually works: mostly one-year steps, plus the wide
+// anchors (3x5x7, 5x7x10, 5x10, 7x10).
+var SECTORS_TIGHT = [
+  [0,1,2,3], [1,2,3,4], [2,3,4,5], [3,4,5,6],
+  [4,5,6,7], [5,6,7,8], [6,7,8,9], [7,8,9,10]
+];
+var SECTORS_WIDE = [
+  [2,3,5,7], [3,5,7,10], [2,5,7,10], [5,7,8,10], [4,6,8,10], [2,4,6,8], [0,2,3,5]
+];
+// A fly and a spread to open, then another spread, then another fly, and on.
+// The feed runs until the sector has nothing fresh left to quote.
+var FEED_KINDS = ['f','s','s','f','s','f','s','f','s','f'];
+var FEED_MIN = 6;
+// Pace it: a quote that opens nothing is dead air, and one that opens the whole
+// board at once is a wall. Prefer the ones that give you a few to work out.
+function genFeed(){
+  for (let attempt = 0; attempt < 30; attempt++){
+    const sector = Math.random() < 0.35 ? pick(SECTORS_WIDE) : pick(SECTORS_TIGHT);
+    const rows = sectorRows(sector);
+    const plan = sectorPlan(rows);
+    const px8 = driftCurve();
+    const board = {}, quotes = [], opened = [];
+    let dead = 0;
+    for (let n = 0; n < FEED_KINDS.length; n++){
+      // the kind this step wants, falling back to the other structure if the
+      // sector has no fresh one of it left
+      const want = FEED_KINDS[n], other = want === 'f' ? 's' : 'f';
+      const fresh = function(k){
+        return rows.filter(function(x){
+          return x.kind === k && (!board[instKey(x) + '|bid'] || !board[instKey(x) + '|offer']); });
+      };
+      const of = fresh(want).length ? fresh(want) : fresh(other);
+      const cands = [];
+      of.forEach(function(inst){ ['bid','offer'].forEach(function(side){
+        // never quote a price the board already carries: a dealer telling you
+        // something you worked out yourself is not a new quote, and it would
+        // quietly take back a line you had earned
+        if (board[instKey(inst) + '|' + side]) return;
+        const q = quoteOf(inst, side, px8);
+        const clone = {};
+        Object.keys(board).forEach(function(k){ clone[k] = board[k]; });
+        const was = Object.keys(clone).length;
+        addQuote(clone, plan, q);
+        cands.push({ q: q, opens: Object.keys(clone).length - was - 1 });
+      }); });
+      if (!cands.length) break;
+      const good = cands.filter(function(c){ return c.opens >= 1 && c.opens <= 5; });
+      const some = cands.filter(function(c){ return c.opens > 0; });
+      const ch = n === 0 ? pick(cands) : pick(good.length ? good : some.length ? some : cands);
+      quotes.push(ch.q); addQuote(board, plan, ch.q); opened.push(ch.opens);
+      if (n > 0 && ch.opens === 0) dead++;
+    }
+    // the second quote must open something, or the feed starts with nothing to do
+    if (quotes.length < FEED_MIN || opened[1] < 1 || dead > 2) continue;
+    return { sector: sector, rows: rows, plan: plan, quotes: quotes, px8: px8, opened: opened };
+  }
+  return null;
+}
+
 // ---- answers and the traps that are real mistakes ----
 function sideWord(side, vocab){
   if (vocab !== 'gt') return side;
@@ -639,7 +796,7 @@ function careerCount(stats){
 // ==PURE-END==
 
 // ==TESTS-BEGIN==
-function runTests(){
+function runTests(deep){
   const failed = [];
   let count = 0;
   function eq(name, got, want){
@@ -903,6 +1060,108 @@ function runTests(){
   eq('no tenor combination outside the curated grid', stray, null);
   eq('tight triples are all one-year steps', TRIPLES_TIGHT.every(function(t){
     return instLabel(mkF(t[0],t[1],t[2])).split('x').length === 3; }), true);
+  // ---- THE FEED ----
+  // Reference closure: every pair, every coefficient, repeated to a fixpoint.
+  // Slow and obviously right. The worklist in addQuote is an optimisation and
+  // must agree with this on every cell, or it is hiding a price from the user.
+  function refBoard(quotes){
+    const B = {};
+    const bet = function(sd, a, b){ return sd === 'bid' ? a > b : a < b; };
+    quotes.forEach(function(q){
+      const k = instKey(q.inst)+'|'+q.side;
+      if (!B[k] || bet(q.side, q.px8, B[k].px8)) B[k] = { inst:q.inst, side:q.side, px8:q.px8 };
+    });
+    for (let pass = 0; pass < 10; pass++){
+      let grew = false;
+      const cur = Object.keys(B).map(function(k){ return B[k]; });
+      cur.forEach(function(A){ cur.forEach(function(C){
+        if (instKey(A.inst) === instKey(C.inst)) return;
+        COEFS.forEach(function(c1){ COEFS.forEach(function(c2){
+          const T = recognize(combineW([A.inst, C.inst], [c1, c2])); if (!T) return;
+          const v = c1*A.px8 + c2*C.px8; if (!Number.isInteger(v)) return;
+          ['bid','offer'].forEach(function(S){
+            const need = reqSides([c1,c2], S);
+            if (need[0] !== A.side || need[1] !== C.side) return;
+            const k = instKey(T)+'|'+S;
+            if (B[k] && !bet(S, v, B[k].px8)) return;
+            B[k] = { inst:T, side:S, px8:v }; grew = true;
+          });
+        }); });
+      }); });
+      if (!grew) break;
+    }
+    return B;
+  }
+
+  // THE REPORTED CASE: a fly bid and a spread offer, and what you write off them
+  const fq = [{inst:mkF(IX['1y'],IX['18m'],IX['2y']), side:'bid',   px8:E(3.25)},
+              {inst:mkS(IX['1y'],IX['18m']),          side:'offer', px8:E(12)}];
+  eq('feed: 1x18mx2 bid 3.25 + 1x18m offer 12 writes the 18mx2 offer 8.75',
+     impliedOf(boardOf(fq, sectorPlan(sectorRows([IX['1y'],IX['18m'],IX['2y']]))))
+       .map(function(e){ return instLabel(e.inst) + ' ' + e.side + ' ' + fmt(e.px8); }),
+     ['18mx2 offer 8.75', '1x2 offer 20.75']);
+
+  let xCross = 0, xRef = 0, xStep = 0, xFree = 0, xRoute = 0, xStale = 0, feeds = 0;
+  let minImplied = 1e9, minQuotes = 1e9, shrank = 0, opened = 0;
+  const FEEDS = deep ? 12 : 3;
+  for (let f = 0; f < FEEDS; f++){
+    const F = genFeed();
+    if (!F){ feeds = -1; break; }
+    feeds++;
+    minQuotes = Math.min(minQuotes, F.quotes.length);
+    // REVEAL is read at every step, not just the last, so every prefix must be
+    // right too - and the board may only ever grow, never take a line back
+    let prev = 0;
+    for (let i = 1; i <= F.quotes.length; i++){
+      const Bi = boardOf(F.quotes.slice(0, i), F.plan);
+      if (deep){
+        const Ri = refBoard(F.quotes.slice(0, i));
+        if (Object.keys(Bi).sort().join(',') !== Object.keys(Ri).sort().join(',')) xStep++;
+        else Object.keys(Bi).forEach(function(k){ if (Bi[k].px8 !== Ri[k].px8) xStep++; });
+      }
+      const now = Object.keys(Bi).length;
+      if (now < prev) shrank++;
+      prev = now;
+      if (i > 1 && now > prev - 1) opened++;
+    }
+    const B = boardOf(F.quotes, F.plan);
+    const imp = impliedOf(B);
+    minImplied = Math.min(minImplied, imp.length);
+    // the fast closure must equal the reference, cell for cell
+    const R = refBoard(F.quotes);
+    const kb = Object.keys(B).sort().join(','), kr = Object.keys(R).sort().join(',');
+    if (kb !== kr) xRef++;
+    else Object.keys(B).forEach(function(k){ if (B[k].px8 !== R[k].px8) xRef++; });
+    imp.forEach(function(e){
+      // the route reproduces the level it claims
+      if (e.via.coefs[0]*e.via.a.px8 + e.via.coefs[1]*e.via.b.px8 !== e.px8) xRoute++;
+      // and both legs are the board's own current entries, not stale copies
+      const pa = B[instKey(e.via.a.inst)+'|'+e.via.a.side];
+      const pb = B[instKey(e.via.b.inst)+'|'+e.via.b.side];
+      if (!pa || pa.px8 !== e.via.a.px8 || !pb || pb.px8 !== e.via.b.px8) xStale++;
+      // an implied price is never better than the true mid - no free money
+      const mid = instValue(e.inst, F.px8);
+      if (e.side === 'offer' ? e.px8 < mid : e.px8 > mid) xFree++;
+    });
+    // and no implied market is ever crossed
+    F.rows.forEach(function(inst){
+      const b = B[instKey(inst)+'|bid'], o = B[instKey(inst)+'|offer'];
+      if (b && o && b.px8 >= o.px8) xCross++;
+    });
+  }
+  eq('feed: generated', feeds, FEEDS);
+  eq('feed: the worklist closure equals the brute-force closure', xRef, 0);
+  eq('feed: every route reproduces its own level', xRoute, 0);
+  eq('feed: every route stands on the board\'s current prices', xStale, 0);
+  eq('feed: no implied price is better than the true mid', xFree, 0);
+  eq('feed: no implied market is ever crossed', xCross, 0);
+  eq('feed: every step of the feed, not just the last, matches the reference', xStep, 0);
+  eq('feed: the board never takes back a line it gave you', shrank, 0);
+  eq('feed: quotes actually open prices as they land', opened > 0, true);
+  eq('feed: every feed runs at least FEED_MIN quotes', minQuotes >= FEED_MIN, true);
+  eq('feed: every feed leaves real work on the board', minImplied >= 8, true);
+  eq('feed: it opens with a fly and a spread', FEED_KINDS.slice(0,3).join(''), 'fss');
+
   return { count: count, failed: failed };
 }
 // ==TESTS-END==
@@ -910,7 +1169,7 @@ function runTests(){
 // =====================================================================
 // React UI
 // =====================================================================
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 const QUESTIONS_PER_ROUND = 20;
 const SPEED_MS = 12000;
@@ -1000,6 +1259,95 @@ function QuotePanel({ quotes, vocab, hidden }){
           <span className="qpx">{fmt(q.px8)}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// THE FEED — quotes land one at a time, you work the implieds on paper, and
+// REVEAL checks you. Nothing to type: the whole point is the paper.
+function Feed({ vocab, onMenu }){
+  const [feed, setFeed] = useState(() => genFeed());
+  const [n, setN] = useState(1);
+  const [shown, setShown] = useState(false);
+  const quotes = useMemo(() => feed ? feed.quotes.slice(0, n) : [], [feed, n]);
+  const implied = useMemo(
+    () => feed ? impliedOf(boardOf(quotes, feed.plan)) : [], [feed, quotes]);
+  const done = !!feed && n >= feed.quotes.length;
+
+  const next = useCallback(() => {
+    if (done) return;
+    setShown(false); setN(function(x){ return x + 1; });
+  }, [done]);
+  const again = useCallback(() => { setFeed(genFeed()); setN(1); setShown(false); }, []);
+
+  useEffect(() => {
+    const h = (e) => {
+      if (e.key === 'Escape'){ e.preventDefault(); onMenu(); return; }
+      if (e.key === 'r' || e.key === 'R'){ e.preventDefault(); setShown(function(x){ return !x; }); return; }
+      if (e.key === 'n' || e.key === 'N' || e.key === 'Enter'){
+        e.preventDefault(); if (done) again(); else next(); }
+    };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [next, again, done, onMenu]);
+
+  if (!feed) return (
+    <div><div className="err">could not build a feed — reload</div>
+      <div className="btnrow"><button type="button" className="btn" onClick={onMenu}>MENU</button></div></div>
+  );
+
+  window.__feed = { n: n, quotes: quotes, implied: implied, shown: shown, done: done };
+  return (
+    <div>
+      <div className="hud">
+        <span><b>{feed.sector.map(function(i){ return CURVE[i].lbl; }).join('·')}</b></span>
+        <span>Q <b>{n}/{feed.quotes.length}</b></span>
+        <span><b>{implied.length}</b> {shown ? 'shown' : 'to find'}</span>
+        <span style={{marginLeft:'auto'}}>
+          <button type="button" className="btn end" onClick={onMenu}>END ✕</button>
+        </span>
+      </div>
+      <div className="screen">
+        {quotes.map((q, i) => (
+          <div className={'qrow' + (i === quotes.length - 1 ? ' fresh' : '')} key={i}>
+            <span className="qinst">{instLabel(q.inst)}</span>
+            <span className="qside">{sideWord(q.side, vocab)}</span>
+            <span className="qpx">{fmt(q.px8)}</span>
+            {i === quotes.length - 1 && <span className="qtag">JUST IN</span>}
+          </div>
+        ))}
+      </div>
+      <div className="feedask">
+        {implied.length === 0
+          ? 'nothing implied yet — wait for the next one'
+          : 'write every price this board now implies, then check yourself'}
+      </div>
+      {shown && (
+        <div className="imps">
+          <div className="ihd">{implied.length} IMPLIED — BEST PRICE THE BOARD CAN MAKE</div>
+          {implied.map((e, i) => (
+            <div className="irow" key={i}>
+              <span className="iinst">{instLabel(e.inst)}</span>
+              <span className="iside">{sideWord(e.side, vocab)}</span>
+              <span className="ipx">{fmt(e.px8)}</span>
+              <span className="ivia">= {termsText(
+                [{ c: e.via.coefs[0], inst: e.via.a.inst, side: e.via.a.side },
+                 { c: e.via.coefs[1], inst: e.via.b.inst, side: e.via.b.side }], vocab)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="btnrow">
+        <button type="button" className={'btn' + (shown ? '' : ' primary')}
+                onClick={() => setShown(function(x){ return !x; })}>
+          {shown ? 'HIDE · R' : 'REVEAL ▾\u00a0\u00a0R'}</button>
+        {done
+          ? <button type="button" className="btn primary" onClick={again}>NEW FEED ▸&nbsp;&nbsp;N</button>
+          : <button type="button" className="btn" onClick={next}>NEXT QUOTE ▸&nbsp;&nbsp;N</button>}
+        <button type="button" className="btn" onClick={onMenu}>MENU · ESC</button>
+      </div>
+      {done && <div className="hint" style={{marginTop:'.5rem'}}>
+        board complete — the sector has nothing fresh left to quote</div>}
     </div>
   );
 }
@@ -1181,18 +1529,19 @@ function Summary({ history, stats, onRestart, onMenu }){
 }
 
 function Menu({ speed, blind, vocab, reached, career, storeOk, testResult,
-                onStart, onToggleSpeed, onToggleBlind, onToggleVocab, onReset }){
+                onStart, onFeed, onToggleSpeed, onToggleBlind, onToggleVocab, onReset }){
   const [armed, setArmed] = useState(false);
   useEffect(() => {
     const h = (e) => {
       if (e.key >= '1' && e.key <= '3'){ e.preventDefault(); onStart(+e.key); }
+      if (e.key === 'f' || e.key === 'F'){ e.preventDefault(); onFeed(); }
       if (e.key === 's' || e.key === 'S'){ e.preventDefault(); onToggleSpeed(); }
       if (e.key === 'v' || e.key === 'V'){ e.preventDefault(); onToggleBlind(); }
       if (e.key === 'g' || e.key === 'G'){ e.preventDefault(); onToggleVocab(); }
     };
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
-  }, [onStart, onToggleSpeed, onToggleBlind, onToggleVocab]);
+  }, [onStart, onFeed, onToggleSpeed, onToggleBlind, onToggleVocab]);
   return (
     <div className="menu">
       {testResult.failed.length > 0 &&
@@ -1206,6 +1555,11 @@ function Menu({ speed, blind, vocab, reached, career, storeOk, testResult,
             <span className="ds">{s.ds}{s.n === reached ? ' — you are here' : ''}</span>
           </div>
         ))}
+        <div className="lvl" style={{cursor:'pointer', borderColor:'rgba(91,209,255,.5)'}} onClick={onFeed}>
+          <span className="num" style={{color:'var(--cyan)'}}>F</span>
+          <span className="nm">THE FEED</span>
+          <span className="ds">quotes land one at a time on a live board — work the implieds on paper, reveal to check</span>
+        </div>
         <div className="opt">
           <span className="optbtn" onClick={onToggleVocab}><b>G</b> {vocab === 'gt' ? 'GIVEN / TAKEN' : 'BID / OFFER'}</span>
           <span className="optbtn" onClick={onToggleSpeed}><b>S</b> speed: {speed ? 'ON · 12s' : 'off'}</span>
@@ -1265,10 +1619,12 @@ function App(){
         <h1>MAKE IT</h1>
         <span className="sub">two quotes in — what can you make</span>
       </div>
+      {phase === 'feed' && <Feed vocab={vocab} onMenu={() => setPhase('menu')} />}
       {phase === 'menu' &&
         <Menu speed={speed} blind={blind} vocab={vocab} reached={reached}
               career={careerCount(statsRef.current)} storeOk={storeOk} testResult={testResult}
               onStart={s => { setStage(s); setRoundId(r => r+1); setPhase('drill'); }}
+              onFeed={() => setPhase('feed')}
               onToggleSpeed={() => setSpeed(x => !x)}
               onToggleBlind={() => setBlind(x => !x)}
               onToggleVocab={() => setVocab(v => v === 'gt' ? 'bo' : 'gt')}

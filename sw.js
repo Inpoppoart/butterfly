@@ -30,6 +30,9 @@ self.addEventListener('fetch', (e) => {
 function networkFirst(req){
   return new Promise((resolve) => {
     let settled = false;
+    // With no signal at all, a fetch can hang rather than fail, and the trainer
+    // would sit on the timeout before opening. Go straight to cache instead.
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
     const fromCache = () => {
       if (settled) return;
       settled = true;
@@ -37,7 +40,8 @@ function networkFirst(req){
         .then((hit) => resolve(hit || new Response('offline', { status: 503, statusText: 'offline' })))
         .catch(() => resolve(new Response('offline', { status: 503, statusText: 'offline' })));
     };
-    const timer = setTimeout(fromCache, NET_TIMEOUT_MS);
+    const timer = setTimeout(fromCache, offline ? 0 : NET_TIMEOUT_MS);
+    if (offline){ fromCache(); return; }
     fetch(req).then((res) => {
       clearTimeout(timer);
       if (settled) return;                            // the timeout already answered from cache

@@ -28,10 +28,20 @@ jobs:
           node-version: '20'
           cache: npm
 
+      - name: Self-tests — the engine, run deep
+        run: |
+          { sed -n '/==PURE-BEGIN==/,/==PURE-END==/p' implied-shift.html
+            sed -n '/==TESTS-BEGIN==/,/==TESTS-END==/p' implied-shift.html
+            echo 'const r = runTests(true);'
+            echo 'console.log(r.count + " tests, " + r.failed.length + " failed");'
+            echo 'if (r.failed.length){ console.error(r.failed.join("\n")); process.exit(1); }'
+          } > /tmp/engine-tests.js
+          node /tmp/engine-tests.js
+
       - name: Build — precompile JSX, inline React, stamp the service worker
         run: |
           npm ci
-          node build.mjs implied-shift.html
+          node build.mjs implied-shift.html --in-place
 
       - name: Keep build tooling out of the published site
         run: rm -rf node_modules package.json package-lock.json build.mjs build

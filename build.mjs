@@ -3,8 +3,12 @@
 // transpile on every load. The authored source stays JSX — this only rewrites
 // a copy.
 //
-//   node build.mjs                      -> build/implied-shift.html (safe default)
-//   node build.mjs implied-shift.html   -> overwrite in place (CI, ephemeral checkout)
+//   node build.mjs                       -> build/implied-shift.html (safe default)
+//   node build.mjs out.html              -> anywhere else
+//   node build.mjs implied-shift.html --in-place
+//        -> compile over the authored source. Only CI wants this, on its own
+//           ephemeral checkout; the flag is required because doing it by
+//           accident destroys the source you are editing.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -13,8 +17,17 @@ import { transformSync } from '@babel/core';
 import presetReact from '@babel/preset-react';
 
 const SRC = 'implied-shift.html';
-const OUT = process.argv[2] || 'build/implied-shift.html';
+const args = process.argv.slice(2);
+const OUT = args.find((a) => !a.startsWith('--')) || 'build/implied-shift.html';
 const SW = 'sw.js';
+
+if (resolve(OUT) === resolve(SRC) && !args.includes('--in-place')) {
+  throw new Error(
+    `refusing to compile over the authored source (${SRC}).\n` +
+    `  build elsewhere:  node build.mjs build/implied-shift.html\n` +
+    `  or say so:        node build.mjs ${SRC} --in-place`
+  );
+}
 
 const html = readFileSync(SRC, 'utf8');
 
